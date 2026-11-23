@@ -35,6 +35,7 @@ const DEFAULT_SETTINGS = {
   providerProfiles: emptyProviderProfiles(),
   defaultLanguage: "zh",
   defaultStyle: "sharp",
+  forceEnglishReplies: true,
   maxChineseChars: 24,
   maxEnglishWords: 22,
   visionEnabled: true,
@@ -336,6 +337,19 @@ function looksTruncatedEnglish(reply) {
   return TRUNCATED_ENGLISH_TAIL.test(tail);
 }
 
+// 回复语言判定。中文推文是否也给英文，由 forceEnglishReplies 控制；
+// 三处（提示词、长度截断、残句过滤）必须用同一套判断，否则会出现
+// 「按英文写、按中文截」这种错位。
+function shouldReplyInEnglish(settings, payload) {
+  const styleId = payload.style || settings.defaultStyle || "sharp";
+  return Boolean(
+    payload.language === "en"
+    || styleId === "english"
+    || settings.defaultLanguage === "en"
+    || settings.forceEnglishReplies
+  );
+}
+
 function clampReplyCount(count) {
   const n = Number(count || 1);
   if (!Number.isFinite(n)) return 1;
@@ -393,7 +407,7 @@ async function loadPhotos(rawPhotos, limit) {
 function buildInstructions(settings, payload, replyCount = 1) {
   const mergedBanned = unique([...parseList(settings.bannedWords), ...parseList(payload.extraBannedWords)]).join("、") || "";
   const styleId = payload.style || settings.defaultStyle || "sharp";
-  const isEnglish = payload.language === "en" || styleId === "english" || settings.defaultLanguage === "en";
+  const isEnglish = shouldReplyInEnglish(settings, payload);
   const desiredCount = clampReplyCount(replyCount);
   const lengthRule = isEnglish
     ? `每条 ${settings.maxEnglishWords || 22} 个英文单词左右`
@@ -404,7 +418,7 @@ function buildInstructions(settings, payload, replyCount = 1) {
 
   return `你在帮用户回复一条 X 推文，写出能直接发进评论区的回复。
 
-- 原推英文就回英文，中文就回中文
+- ${isEnglish ? "一律用自然英文回复，原推是中文也一样" : "原推英文就回英文，中文就回中文"}
 - ${lengthRule}，口语，短句，像真人随手打的
 - 不要写成小作文，不要分析、总结、讲道理
 
@@ -732,7 +746,7 @@ function parseReplyCandidates(raw) {
 function cleanReplyCandidates(candidates, settings, payload, count) {
   const replies = [];
   const seen = new Set();
-  const isEnglish = payload.language === "en" || payload.style === "english" || settings.defaultLanguage === "en";
+  const isEnglish = shouldReplyInEnglish(settings, payload);
   for (const candidate of candidates) {
     const reply = cleanReply(candidate, settings, payload);
     const key = normalizeTextForCompare(reply);
@@ -752,7 +766,7 @@ function normalizeTextForCompare(text) {
 
 function cleanReply(text, settings, payload) {
   let reply = dedupeRepeatedText(stripNoise(text));
-  const isEnglish = payload.language === "en" || payload.style === "english" || settings.defaultLanguage === "en";
+  const isEnglish = shouldReplyInEnglish(settings, payload);
 
   if (isEnglish) {
     const words = reply.split(/\s+/).filter(Boolean);

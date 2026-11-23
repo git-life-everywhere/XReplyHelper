@@ -937,3 +937,46 @@ test("v2.3.14: 上一条与主帖内容相同时不重复输出", () => {
 
   assert.equal((input.match(/same text/g) || []).length, 1);
 });
+
+// v2.6.0 — 中文推文也可以优先给英文回复，由 forceEnglishReplies 控制。
+// 三处语言判定（提示词、长度截断、残句过滤）必须一致。
+test("v2.6.0: 开关开启时中文推文也走英文规则", () => {
+  const context = loadBackground({
+    settings: baseSettings(),
+    fetchImpl: async () => ({ ok: true, status: 200, headers: { get: () => "application/json" }, text: async () => "{}" })
+  });
+
+  const on = context.buildInstructions(
+    { ...baseSettings(), forceEnglishReplies: true, maxEnglishWords: 44, customPrompt: "" },
+    { language: "zh", style: "sharp" },
+    3
+  );
+  assert.match(on, /一律用自然英文回复，原推是中文也一样/);
+  assert.match(on, /每条 44 个英文单词左右/);
+
+  const off = context.buildInstructions(
+    { ...baseSettings(), forceEnglishReplies: false, maxChineseChars: 38, customPrompt: "" },
+    { language: "zh", style: "sharp" },
+    3
+  );
+  assert.match(off, /原推英文就回英文，中文就回中文/);
+  assert.match(off, /每条 38 个中文字符左右/);
+});
+
+test("v2.6.0: shouldReplyInEnglish 覆盖四种输入", () => {
+  const context = loadBackground({
+    settings: baseSettings(),
+    fetchImpl: async () => ({ ok: true, status: 200, headers: { get: () => "application/json" }, text: async () => "{}" })
+  });
+
+  const base = { defaultStyle: "sharp", defaultLanguage: "zh" };
+
+  // 开关开 → 中文推文也判英文
+  assert.equal(context.shouldReplyInEnglish({ ...base, forceEnglishReplies: true }, { language: "zh" }), true);
+  // 开关关 + 中文推文 → 中文
+  assert.equal(context.shouldReplyInEnglish({ ...base, forceEnglishReplies: false }, { language: "zh" }), false);
+  // 英文推文 → 永远英文
+  assert.equal(context.shouldReplyInEnglish({ ...base, forceEnglishReplies: false }, { language: "en" }), true);
+  // 默认语言设成英文 → 全部英文
+  assert.equal(context.shouldReplyInEnglish({ ...base, forceEnglishReplies: false, defaultLanguage: "en" }, { language: "zh" }), true);
+});

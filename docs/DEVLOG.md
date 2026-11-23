@@ -5,6 +5,39 @@
 
 ---
 
+## v2.6.0 — 2026-11-23 — 中文推文也优先给英文回复
+
+**确定方案**
+
+使用者要求：中文推文也要优先给英文回复。
+
+原先的判定只有三条：原推语言、风格、默认语言。任何一条命中英文才走英文规则，所以中文推文 + 默认中文时永远出中文候选。
+
+新增 `forceEnglishReplies`，默认开启。开启后不看原推语言，一律出英文候选；配合已有的中文译文行，用户既能发英文，也看得懂意思。
+
+关键约束：语言判定在代码里有三处（提示词拼装、长度截断、残句过滤）。三处必须用同一套判断，否则会出现「按英文写、按中文截」的错位。所以抽成 `shouldReplyInEnglish(settings, payload)` 统一调用。
+
+**实施细节**
+
+- `background.js`
+  - `DEFAULT_SETTINGS` 新增 `forceEnglishReplies: true`。
+  - 新增 `shouldReplyInEnglish()`：原推英文 / 风格英文 / 默认语言英文 / 开关开启，任一命中即英文。
+  - `buildInstructions()`、`cleanReply()`、`cleanReplyCandidates()` 三处的语言判定统一改为调用它。
+  - 提示词的语言规则随判定变化：英文模式下写「一律用自然英文回复，原推是中文也一样」。
+- `options.html` / `options.js`
+  - 回复设置新增「中文推文也用英文回复」开关。
+- `tests/background.test.mjs`
+  - 新增 2 条：开关开启时提示词与长度都走英文；`shouldReplyInEnglish` 覆盖四种输入组合。
+
+**状态**
+
+已交付。`node --test tests/*.test.mjs` 113/113 全绿。
+
+**遗留**
+
+- 若模型无视语言规则仍输出中文，长度会按英文规则处理（中文无空格，`split(/\s+/)` 后只有一个「词」，不会被截断），候选可能偏长。目前只在英文场景验证过。
+- `defaultLanguage` 与 `forceEnglishReplies` 有语义重叠：都设英文时行为一致。暂未合并，保留两个旋钮。
+
 ## v2.3.14 — 2026-11-23 — 回复评论时带上线程语境
 
 **确定方案**

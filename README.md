@@ -37,7 +37,7 @@ X 推文互动回复器（XReplyHelper）是一款通用的 X / Twitter AI 回�
 15. **二次元玻璃拟态 UI**：v2.1.4 起采用强哥拍的新底图 `options_bg.png`，section-title 用 lucide 风格 inline SVG 图标。
 16. **独立设置页**：点击浏览器图标直接打开 options.html，不再用容易自动关闭的 popup。
 17. **推文图片理解**（v2.2.2 起）：默认读取 3 张推文图片并交给模型，渠道不支持时自动退回纯文本。
-18. **自动化测试基线**：`tests/*.test.mjs` 共 111 条用例，覆盖 background 生成路径、content 注入逻辑、CSS 约束、manifest 行为、endpoint-preview、多模态入参。
+18. **自动化测试基线**：`tests/*.test.mjs` 共 113 条用例，覆盖 background 生成路径、content 注入逻辑、CSS 约束、manifest 行为、endpoint-preview、多模态入参。
 
 ---
 
