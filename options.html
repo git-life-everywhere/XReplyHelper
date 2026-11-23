@@ -534,14 +534,33 @@
         </div>
       </div>
 
-      <label for="projectHandle">默认项目方 @账号，可空</label>
-      <input id="projectHandle" type="text" placeholder="例如 @worldlibertyfi" />
+      <div class="row">
+        <div>
+          <label for="maxPhotos">最多读取图片数量，1-4</label>
+          <input id="maxPhotos" type="number" min="1" max="4" step="1" />
+        </div>
+        <div>
+          <label class="debug-toggle">
+            <input id="visionEnabled" type="checkbox" />
+            识别推文图片
+          </label>
+          <div class="hint">开启后会把推文图片下载并发送给模型，图片也计入接口用量。渠道不支持图片时会自动退回纯文本。</div>
+        </div>
+      </div>
+
+      <label for="projectHandle">默认关联 @账号，可空</label>
+      <input id="projectHandle" type="text" placeholder="例如 @openai" />
 
       <label for="bannedWords">禁用词，逗号分隔</label>
       <textarea id="bannedWords" placeholder="我觉得,值得关注,未来可期"></textarea>
 
       <label for="customPrompt">额外提示词，可空</label>
       <textarea id="customPrompt" placeholder="只写风格、人设和边界即可；回复数量和输出格式由插件固定控制为 3 条候选。"></textarea>
+
+      <label class="debug-toggle">
+        <input id="autoTranslate" type="checkbox" />
+        非中文候选自动显示中文译文
+      </label>
 
       <label class="debug-toggle">
         <input id="debugMode" type="checkbox" />

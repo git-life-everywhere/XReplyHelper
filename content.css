@@ -85,6 +85,65 @@
 .akiii-toast-error {
   background: linear-gradient(135deg, rgba(244, 33, 46, .90), rgba(255, 114, 189, .82));
   color: #fff;
+  /* 错误信息可能很长（推理模型占满额度、Base URL 填成首页等诊断），
+     999px 胶囊圆角会把多行文字两侧裁掉，这里改用固定圆角并允许换行。 */
+  border-radius: 18px;
+  line-height: 1.5;
+  white-space: normal;
+  word-break: break-word;
+}
+
+/* 原推译文的展示位：位于头部与候选列表之间。完整显示，不折叠也不限高。 */
+.akiii-draft-source {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border-left: 2px solid rgba(139, 247, 255, .45);
+  border-radius: 8px;
+  color: rgba(214, 232, 240, .86);
+  background: rgba(4, 12, 23, .46);
+  font: 500 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  overflow-wrap: anywhere;
+  scrollbar-color: rgba(188, 216, 226, .72) rgba(255,255,255,.08);
+}
+
+/* 可编辑译文：给出明确的可输入提示，聚焦时加重左边线 */
+.akiii-draft-translation[contenteditable="true"] {
+  cursor: text;
+  transition: border-color .15s ease, background .15s ease;
+}
+
+.akiii-draft-translation[contenteditable="true"]:focus {
+  outline: none;
+  border-left-color: rgba(139, 247, 255, .92);
+  background: rgba(4, 12, 23, .62);
+}
+
+.akiii-draft-translation:empty::before {
+  content: "改这里的中文，候选会按新意思重写";
+  color: rgba(206, 226, 236, .42);
+}
+
+.akiii-draft-source-line + .akiii-draft-source-line {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(139, 247, 255, .16);
+}
+
+.akiii-draft-translation {
+  margin-top: 6px;
+  /* 与上方文本框右边缘对齐：让出右侧按钮列（按钮宽 + 列间距） */
+  margin-right: calc(var(--akiii-action-button-width) + 12px);
+  padding: 6px 10px;
+  border-left: 2px solid rgba(139, 247, 255, .38);
+  border-radius: 6px;
+  color: rgba(206, 226, 236, .80);
+  background: rgba(4, 12, 23, .40);
+  font: 500 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  text-indent: 0;
+  overflow-wrap: anywhere;
 }
 
 .akiii-draft-panel {
@@ -95,9 +154,14 @@
   bottom: max(12px, env(safe-area-inset-bottom));
   z-index: 2147483646;
   isolation: isolate;
-  width: min(490px, calc(100vw - 24px));
-  height: min(490px, 60dvh);
-  max-height: min(490px, 60dvh);
+  display: flex;
+  flex-direction: column;
+  width: min(560px, calc(100vw - 24px));
+  /* 高度完全贴内容：有几条就多高，不预留、不截断。
+     唯一的硬上限是视口——只有内容真装不进浏览器窗口时才滚动。 */
+  height: auto;
+  min-height: min(320px, 60dvh);
+  max-height: calc(100dvh - 24px);
   padding: 16px;
   border-radius: 22px;
   color: rgba(238, 251, 255, .96);
@@ -253,6 +317,12 @@
   z-index: 1;
   display: grid;
   gap: 16px;
+  /* 面板高度有限，候选条数固定为 3。小屏或长文本时让列表内部滚动，
+     避免 overflow:hidden 把最后一条直接裁掉。 */
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow-y: auto;
+  scrollbar-color: rgba(188, 216, 226, .72) rgba(255,255,255,.08);
 }
 
 .akiii-draft-candidate {
@@ -310,9 +380,9 @@
   min-width: 0;
   max-width: none;
   justify-self: stretch;
-  height: clamp(108px, 13dvh, 112px);
-  min-height: 82px;
-  max-height: 124px;
+  height: clamp(148px, 17dvh, 168px);
+  min-height: 112px;
+  max-height: 200px;
   resize: none;
   padding: 10px 12px;
   text-indent: 70px;
@@ -385,12 +455,66 @@
 .akiii-draft-candidate-actions button:disabled { opacity: .65; cursor: wait; transform: none; }
 
 @media (max-width: 760px) {
-  .akiii-draft-panel {
+  /* 原推译文的展示位：位于头部与候选列表之间。完整显示，不折叠也不限高。 */
+.akiii-draft-source {
+  position: relative;
+  z-index: 1;
+  flex: 0 0 auto;
+  margin-bottom: 12px;
+  padding: 8px 10px;
+  border-left: 2px solid rgba(139, 247, 255, .45);
+  border-radius: 8px;
+  color: rgba(214, 232, 240, .86);
+  background: rgba(4, 12, 23, .46);
+  font: 500 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  overflow-wrap: anywhere;
+  scrollbar-color: rgba(188, 216, 226, .72) rgba(255,255,255,.08);
+}
+
+/* 可编辑译文：给出明确的可输入提示，聚焦时加重左边线 */
+.akiii-draft-translation[contenteditable="true"] {
+  cursor: text;
+  transition: border-color .15s ease, background .15s ease;
+}
+
+.akiii-draft-translation[contenteditable="true"]:focus {
+  outline: none;
+  border-left-color: rgba(139, 247, 255, .92);
+  background: rgba(4, 12, 23, .62);
+}
+
+.akiii-draft-translation:empty::before {
+  content: "改这里的中文，候选会按新意思重写";
+  color: rgba(206, 226, 236, .42);
+}
+
+.akiii-draft-source-line + .akiii-draft-source-line {
+  margin-top: 6px;
+  padding-top: 6px;
+  border-top: 1px solid rgba(139, 247, 255, .16);
+}
+
+.akiii-draft-translation {
+  margin-top: 6px;
+  /* 与上方文本框右边缘对齐：让出右侧按钮列（按钮宽 + 列间距） */
+  margin-right: calc(var(--akiii-action-button-width) + 12px);
+  padding: 6px 10px;
+  border-left: 2px solid rgba(139, 247, 255, .38);
+  border-radius: 6px;
+  color: rgba(206, 226, 236, .80);
+  background: rgba(4, 12, 23, .40);
+  font: 500 13px/1.55 -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Microsoft YaHei", sans-serif;
+  text-indent: 0;
+  overflow-wrap: anywhere;
+}
+
+.akiii-draft-panel {
     right: max(8px, env(safe-area-inset-right));
     bottom: max(8px, env(safe-area-inset-bottom));
     width: calc(100vw - 16px);
-    height: min(490px, 60dvh);
-    max-height: min(490px, 60dvh);
+    height: auto;
+    min-height: min(300px, 58dvh);
+    max-height: calc(100dvh - 16px);
     padding: 12px;
     border-radius: 22px;
   }
@@ -428,9 +552,9 @@
   }
 
   .akiii-draft-text {
-    height: clamp(92px, 16dvh, 108px);
-    min-height: 76px;
-    max-height: 116px;
+    height: clamp(120px, 18dvh, 150px);
+    min-height: 96px;
+    max-height: 180px;
     padding: 10px 12px;
     text-indent: 70px;
     border-radius: 14px;

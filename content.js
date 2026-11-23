@@ -12,6 +12,8 @@
   const POST_BUTTON_SELECTOR = 'button[data-testid="tweetButton"], button[data-testid="tweetButtonInline"]';
   const COMPOSER_CONTROL_SELECTOR = `${TOOLBAR_SELECTOR},${POST_BUTTON_SELECTOR}`;
   const INITIAL_SCAN_DELAYS = [450, 1000, 1800, 3200, 5200];
+  // X 对长推只渲染折叠版，DOM 里没有全文。折叠态的展开控件：
+  const SHOW_MORE_SELECTOR = '[data-testid="tweet-text-show-more-link"]';
 
   const STATE = {
     observer: null,
@@ -148,7 +150,8 @@
     if (type === 'error') div.classList.add('akiii-toast-error');
     if (type === 'ok') div.classList.add('akiii-toast-ok');
     document.body.appendChild(div);
-    setTimeout(() => div.remove(), 3200);
+    // 错误信息往往比状态提示长，给更长阅读时间（6s），普通提示维持 3.2s。
+    setTimeout(() => div.remove(), type === 'error' ? 6000 : 3200);
   }
 
   function closestArticle(node) {
@@ -157,6 +160,48 @@
 
   function extractHandles(text) {
     return [...new Set((String(text || '').match(/@[A-Za-z0-9_]{2,20}/g) || []))];
+  }
+
+  // X 对长推只渲染折叠版，DOM 里没有全文，直接读会拿半截内容去让模型回复。
+  // 展开控件优先按 data-testid 找，找不到再按文案兜底（兼容中英文界面）。
+  function findShowMore(root) {
+    if (!root) return null;
+    const direct = root.querySelector?.(SHOW_MORE_SELECTOR);
+    if (direct && isVisible(direct)) return direct;
+
+    const nodes = [...root.querySelectorAll('div[role="button"], button, span')];
+    return nodes.find((el) => {
+      if (!isVisible(el)) return false;
+      // 排除正文里恰好写了 “Show more” 的情况，只认推文正文之外的展开控件
+      if (el.closest?.('div[data-testid="tweetText"]')) return false;
+      return /^(Show more|显示更多|展示更多)$/i.test(normalizeText(el.innerText || el.textContent || ''));
+    }) || null;
+  }
+
+  async function expandLongTweet(root) {
+    const target = findShowMore(root);
+    if (!target) return false;
+    clickLikeUser(target);
+    await sleep(360);
+    return true;
+  }
+
+  // 收集推文图片。只取 X 媒体 CDN 的图，统一换成 small 规格：原图常见几 MB，
+  // small 通常几十到一百多 KB，模型识别够用，下载也快。
+  // 最多取 4 张，最终张数由设置页的「最多读取图片数量」在后台截断。
+  function extractTweetPhotos(root) {
+    if (!root) return [];
+    const photos = [];
+    const images = [...root.querySelectorAll('img[src*="pbs.twimg.com/media"]')].filter(isVisible);
+    for (const img of images) {
+      const rawSrc = img.getAttribute('src') || img.currentSrc || '';
+      if (!rawSrc) continue;
+      const url = rawSrc.replace(/([?&])name=[^&]*/, '$1name=small');
+      if (photos.some((photo) => photo.url === url)) continue;
+      photos.push({ url, alt: String(img.getAttribute('alt') || '').trim() });
+      if (photos.length >= 4) break;
+    }
+    return photos;
   }
 
   function getStatusUrl(article) {
@@ -212,12 +257,32 @@
   function extractAuthor(article) {
     const nameBlock = article?.querySelector?.('div[data-testid="User-Name"]');
     const text = nameBlock?.innerText || '';
-    const authorHandle = (text.match(/@[A-Za-z0-9_]{2,20}/) || [])[0] || '';
+    let authorHandle = (text.match(/@[A-Za-z0-9_]{2,20}/) || [])[0] || '';
+
+    // User-Name 区块取不到时，用推文 status 链接里的用户名兜底。
+    // 取不到作者 handle，后面就没法把作者自己从 mention 里排除掉。
+    if (!authorHandle) {
+      const link = article?.querySelector?.('a[href*="/status/"]');
+      const fromPath = String(link?.getAttribute?.('href') || '').match(/^\/([A-Za-z0-9_]{2,20})\/status\//);
+      if (fromPath) authorHandle = `@${fromPath[1]}`;
+    }
+
     const name = text
       .split('\n')
       .map((line) => line.trim())
       .find((line) => line && !line.startsWith('@') && !/^\d/.test(line)) || '';
     return { name, authorHandle };
+  }
+
+  // 作者名、作者 handle、纯阅读数、相对时间、分隔符——这些是页面元信息，
+  // 正文抓不到走 fallback 时会被当成推文内容，进而被当成「推文里提到的账号」。
+  function isMetaLine(line, authorName, authorHandle) {
+    if (authorHandle && line.includes(authorHandle)) return true;
+    if (authorName && line === authorName) return true;
+    if (/^\d+(\.\d+)?[KMB]?$/i.test(line)) return true;
+    if (/^\d+\s*(秒|分钟|小时|天|s|m|h|d)$/i.test(line)) return true;
+    if (/^[·•]\s*/.test(line)) return true;
+    return false;
   }
 
   function extractTweetFromArticle(article) {
@@ -231,6 +296,9 @@
       .filter(Boolean)
       .join('\n');
 
+    // 作者信息要先用上：fallback 过滤元信息、以及后面排除作者本人 handle 都依赖它。
+    const { name, authorHandle } = extractAuthor(article);
+
     if (!tweetText) {
       const fallback = article.cloneNode(true);
       fallback.querySelectorAll('button, svg, time, [aria-hidden="true"], .akiii-ai-button, .akiii-menu, [data-testid="toolBar"]').forEach((node) => node.remove());
@@ -239,22 +307,26 @@
         .map((line) => line.trim())
         .filter(Boolean)
         .filter((line) => !['Reply', 'Repost', 'Like', 'Share', '回复', '转帖', '喜欢', '分享'].includes(line))
+        .filter((line) => !isMetaLine(line, name, authorHandle))
         .slice(0, 24)
         .join('\n');
     }
 
-    const { name, authorHandle } = extractAuthor(article);
-    const allText = article.innerText || tweetText;
-    const mentionedHandles = extractHandles(tweetText || allText).filter((h) => h !== authorHandle).slice(0, 8);
+    const mentionedHandles = extractHandles(tweetText).filter((h) => h !== authorHandle).slice(0, 8);
 
-    const finalText = tweetText || allText || '';
+    // 只有正文，不再退回到 article.innerText：fallback 过滤后正文为空说明这条推文
+    // 本来就没文字（纯图片），退回整段 innerText 会把作者名、时间、阅读数、互动数
+    // 全当成推文内容——之前草稿窗顶部那串 "Literature @xxx 6:10 PM · 1,420 Views …"
+    // 就是这么来的。
+    const finalText = tweetText || '';
     return {
       tweetText: finalText,
       author: name,
       authorHandle,
       mentionedHandles,
       url: getStatusUrl(article),
-      language: detectTweetLanguage(finalText)
+      language: detectTweetLanguage(finalText),
+      photos: extractTweetPhotos(article)
     };
   }
 
@@ -320,8 +392,28 @@
       authorHandle,
       mentionedHandles,
       url,
-      language: detectTweetLanguage(finalText)
+      language: detectTweetLanguage(finalText),
+      photos: extractTweetPhotos(dialog)
     } : null;
+  }
+
+  // 主帖详情页里，article 是自上而下的线程序列。取当前这条之前的：
+  // 第一条是主帖，紧挨着的是上一条评论。两者都只在「理解语境」时使用，
+  // 不参与「回复对象」的判断。
+  function extractThreadContext(article) {
+    const empty = { rootText: '', previousText: '' };
+    if (!article) return empty;
+
+    const articles = [...document.querySelectorAll(ARTICLE_SELECTOR)].filter(isVisible);
+    const index = articles.indexOf(article);
+    if (index <= 0) return empty;
+
+    const readText = (node) => String(extractTweetFromArticle(node)?.tweetText || '').trim().slice(0, 600);
+
+    return {
+      rootText: index >= 1 ? readText(articles[0]) : '',
+      previousText: index >= 2 ? readText(articles[index - 1]) : ''
+    };
   }
 
   function extractTweetFromContext(anchor) {
@@ -404,6 +496,16 @@
     while (Date.now() - started < timeout) {
       const box = getBestTextbox();
       if (box) return box;
+      await sleep(120);
+    }
+    return null;
+  }
+
+  async function waitForDialog(timeout = 2500) {
+    const started = Date.now();
+    while (Date.now() - started < timeout) {
+      const dialog = [...document.querySelectorAll('div[role="dialog"]')].find(isVisible);
+      if (dialog) return dialog;
       await sleep(120);
     }
     return null;
@@ -570,7 +672,7 @@
       .slice(0, 3);
   }
 
-  function showDraftPanel(initialReplies, editor) {
+  function showDraftPanel(initialReplies, editor, sourceText = '', photos = []) {
     closeDraftPanel();
     const replies = normalizeDraftReplies(initialReplies);
     if (!replies.length) {
@@ -584,7 +686,7 @@
     panel.setAttribute('aria-modal', 'false');
     panel.tabIndex = -1;
     const panelId = `akiii-draft-${Date.now()}`;
-    const manifestVersion = chrome.runtime.getManifest?.().version || '2.2';
+    const manifestVersion = chrome.runtime.getManifest?.().version || '2.3.0';
     const logoUrl = chrome.runtime.getURL('img/Qiangge.png');
     panel.innerHTML = `
       <div class="akiii-draft-head">
@@ -594,6 +696,10 @@
           <div class="akiii-draft-sub" id="${panelId}-desc">作者：强子手记 @iBigQiang & Akiii @Guomin184935<br>一次生成 3 条候选。先改满意，再填入 X。</div>
         </div>
         <button type="button" class="akiii-draft-close" aria-label="关闭">×</button>
+      </div>
+      <div class="akiii-draft-source" hidden>
+        <div class="akiii-draft-source-line" data-kind="tweet"></div>
+        <div class="akiii-draft-source-line" data-kind="image"></div>
       </div>
       <div class="akiii-draft-list"></div>
     `;
@@ -683,6 +789,8 @@
     });
 
     document.body.appendChild(panel);
+    attachTranslations(replies, panel, sourceText);
+    attachImageText(panel, photos);
     setTimeout(() => {
       const firstTextarea = panel.querySelector('.akiii-draft-text');
       try {
@@ -707,6 +815,155 @@
         else reject(new Error(resp?.error || '生成失败'));
       });
     });
+  }
+
+  // 判断一段文字是不是以中文为主。日文假名与韩文谚文不算中文——
+  // 日文里大量汉字会被 CJK 区间命中，只看汉字数会把日文误判成中文。
+  function isMostlyChinese(text) {
+    const s = String(text || '');
+    if (/[\u3040-\u30ff\uac00-\ud7af]/.test(s)) return false;
+    const cjk = (s.match(/[\u4e00-\u9fff]/g) || []).length;
+    const latin = (s.match(/[A-Za-z]/g) || []).length;
+    const total = cjk + latin;
+    if (!total) return true;
+    return cjk / total > 0.6;
+  }
+
+  // 只要候选不是中文（英、日、韩、法、德……）就补中文译文；
+  // 纯中文候选跳过，避免白花一次请求。
+  function needsTranslation(replies) {
+    return replies.some((reply) => !isMostlyChinese(reply));
+  }
+
+  function requestTranslations(texts) {
+    return new Promise((resolve) => {
+      if (!chrome.runtime?.id) {
+        resolve([]);
+        return;
+      }
+      chrome.runtime.sendMessage({ action: 'translateReplies', texts }, (resp) => {
+        if (chrome.runtime.lastError || !resp?.ok) {
+          resolve([]);
+          return;
+        }
+        resolve(Array.isArray(resp.translations) ? resp.translations : []);
+      });
+    });
+  }
+
+  // 译文异步补进草稿窗：先让用户看到候选，翻译回来再追加一行，失败就当没有。
+  async function attachTranslations(replies, panel, sourceText = '') {
+    const source = String(sourceText || '').trim();
+    const wantSource = Boolean(source) && !isMostlyChinese(source);
+    if (!wantSource && !needsTranslation(replies)) return;
+
+    // 原文放在数组末尾一起送翻，一次请求同时拿到候选译文与原推译文。
+    const payload = wantSource
+      ? [...replies, source.slice(0, 1200)]
+      : [...replies];
+    const translations = await requestTranslations(payload);
+    if (!translations.length) return;
+
+    const items = [...panel.querySelectorAll('.akiii-draft-candidate')];
+    items.forEach((item, index) => {
+      const text = String(translations[index] || '').trim();
+      if (!text || item.querySelector('.akiii-draft-translation')) return;
+      const line = document.createElement('div');
+      line.className = 'akiii-draft-translation';
+      line.contentEditable = 'true';
+      line.spellcheck = false;
+      line.setAttribute('role', 'textbox');
+      line.setAttribute('aria-label', `候选 ${index + 1} 的中文译文，可编辑`);
+      line.textContent = text;
+      item.appendChild(line);
+      bindRewriteOnEdit(line, item, index);
+    });
+
+    if (!wantSource) return;
+    const translated = String(translations[replies.length] || '').trim();
+    if (!translated) return;
+    const line = panel.querySelector('.akiii-draft-source-line[data-kind="tweet"]');
+    if (!line) return;
+    line.textContent = translated;
+    syncSourceBox(panel);
+  }
+
+  // 顶部信息框：原推译文与图片文字各占一行，谁有内容谁显示。
+  function syncSourceBox(panel) {
+    const box = panel.querySelector('.akiii-draft-source');
+    if (!box) return;
+    const hasContent = [...box.querySelectorAll('.akiii-draft-source-line')]
+      .some((el) => el.textContent.trim());
+    box.hidden = !hasContent;
+  }
+
+  function requestRewrite(text) {
+    return new Promise((resolve) => {
+      if (!chrome.runtime?.id) {
+        resolve('');
+        return;
+      }
+      chrome.runtime.sendMessage({ action: 'rewriteReply', text }, (resp) => {
+        if (chrome.runtime.lastError || !resp?.ok) {
+          resolve('');
+          return;
+        }
+        resolve(String(resp.text || '').trim());
+      });
+    });
+  }
+
+  // 英文候选不合适时，用户改下方中文译文，插件按新意思重写英文并覆盖候选。
+  // 防抖 900ms，避免每敲一个字都发一次请求。
+  function bindRewriteOnEdit(line, item, index) {
+    let timer = null;
+    const run = async () => {
+      const meaning = String(line.textContent || '').trim();
+      const textarea = item.querySelector('.akiii-draft-text');
+      if (!meaning || !textarea) return;
+      if (meaning === line.dataset.akiiiSyncedFor) return;
+      const next = await requestRewrite(meaning);
+      if (!next) return;
+      if (String(line.textContent || '').trim() !== meaning) return;   // 期间又改了，放弃这次结果
+      textarea.value = next;
+      line.dataset.akiiiSyncedFor = meaning;
+      toast(`候选 ${index + 1} 已按译文重写`, 'ok');
+    };
+    line.addEventListener('input', () => {
+      clearTimeout(timer);
+      timer = setTimeout(run, 900);
+    });
+    line.addEventListener('blur', () => {
+      clearTimeout(timer);
+      run();
+    });
+  }
+
+  function requestPhotoText(photos) {
+    return new Promise((resolve) => {
+      if (!chrome.runtime?.id || !photos?.length) {
+        resolve('');
+        return;
+      }
+      chrome.runtime.sendMessage({ action: 'describePhotos', photos }, (resp) => {
+        if (chrome.runtime.lastError || !resp?.ok) {
+          resolve('');
+          return;
+        }
+        resolve(String(resp.text || '').trim());
+      });
+    });
+  }
+
+  // 图片里的文字：独立一次视觉请求，拿到后追加一行，失败就当没有。
+  async function attachImageText(panel, photos) {
+    if (!photos?.length) return;
+    const text = await requestPhotoText(photos);
+    if (!text) return;
+    const line = panel.querySelector('.akiii-draft-source-line[data-kind="image"]');
+    if (!line) return;
+    line.textContent = `图片文字：${text}`;
+    syncSourceBox(panel);
   }
 
   function sendGenerateRepliesRequest(payload, count = 3) {
@@ -785,8 +1042,17 @@
 
   async function runForArticle(article, btn, style = null) {
     await runWithButton(btn, async () => {
+      // 先展开长推再读：X 折叠态的 DOM 里只有半截正文，直接读会让模型基于残句生成。
+      if (await expandLongTweet(article)) toast('已展开长推文');
+
       const tweet = extractTweetFromArticle(article);
-      if (!tweet?.tweetText) throw new Error('没有识别到推文内容');
+      // 纯图片推文没有正文是正常的，只要有图就继续；两者都空才算没识别到。
+      if (!tweet?.tweetText && !tweet?.photos?.length) throw new Error('没有识别到推文内容');
+
+      // 主帖详情页里补上「主帖」和「上一条评论」，供模型理解语境。
+      const thread = extractThreadContext(article);
+      tweet.threadRoot = thread.rootText;
+      tweet.threadPrev = thread.previousText;
       STATE.lastTweet = tweet;
       STATE.pendingTweet = tweet;
 
@@ -794,25 +1060,41 @@
       if (replyButton) {
         clickLikeUser(replyButton);
         toast('正在打开回复框并生成');
+        // 弹窗里那份原推同样是折叠态，只是显示问题——正文已从时间线读到。
+        // 这里不 await，打开后顺手展开一次，避免用户以为读的还是半截。
+        waitForDialog(2500).then((dialog) => {
+          if (dialog) expandLongTweet(dialog);
+        });
       } else {
         toast('正在生成');
       }
 
-      const [editor, replies] = await Promise.all([
-        waitForTextbox(8500),
-        sendGenerateRepliesRequest({ ...tweet, style }, 3)
-      ]);
+      // 两件事并行：等回复框出现、请求模型。但不能用 Promise.all —— 它会等两边都结束，
+      // 请求挂住时“没找到回复框”的提示永远等不到，按钮就一直停在“生成中”。
+      // 这里编辑器超时后立即报错，请求留在后台自行结束，失败也不再冒泡。
+      const editorPromise = waitForTextbox(8500);
+      const repliesPromise = sendGenerateRepliesRequest({ ...tweet, style }, 3);
 
-      if (!editor) throw new Error('没找到回复框，先手动点开回复再试');
-      showDraftPanel(replies, editor);
+      const editor = await editorPromise;
+      if (!editor) {
+        repliesPromise.catch(() => {});
+        throw new Error('没找到回复框，先手动点开回复再试');
+      }
+
+      const replies = await repliesPromise;
+      showDraftPanel(replies, editor, tweet.tweetText, tweet.photos);
       toast('已生成 3 条候选，可编辑后填入', 'ok');
     });
   }
 
   async function runForComposer(anchor, btn, style = null) {
     await runWithButton(btn, async () => {
+      // 回复弹窗里的原推同样是折叠的，先展开再读，否则只能拿到半截正文。
+      const dialog = anchor?.closest?.('div[role="dialog"]') || document.querySelector('div[role="dialog"]');
+      if (await expandLongTweet(dialog || document)) toast('已展开原推文');
+
       const tweet = extractTweetFromContext(anchor) || STATE.pendingTweet || STATE.lastTweet;
-      if (!tweet?.tweetText) throw new Error('没有识别到要回复的推文');
+      if (!tweet?.tweetText && !tweet?.photos?.length) throw new Error('没有识别到要回复的推文');
       STATE.lastTweet = tweet;
       STATE.pendingTweet = tweet;
 
@@ -821,7 +1103,7 @@
 
       toast('正在生成');
       const replies = await sendGenerateRepliesRequest({ ...tweet, style }, 3);
-      showDraftPanel(replies, editor);
+      showDraftPanel(replies, editor, tweet.tweetText, tweet.photos);
       toast('已生成 3 条候选，可编辑后填入', 'ok');
     });
   }
@@ -868,6 +1150,7 @@
     if (existing) {
       existing.classList.toggle('akiii-detail-meta', !!detailMetaHost);
       existing.dataset.akiiiStatusId = getStatusIdFromHref(getStatusUrl(article));
+      // 复用后同步刷新 click 用的上下文（见上面的 closestArticle 兜底）
       const isCurrentTargetChild = [...targetHost.children].includes(existing);
       if (existing.parentElement !== targetHost || !isCurrentTargetChild) targetHost.insertBefore(existing, null);
       return;
@@ -879,9 +1162,23 @@
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      runForArticle(article, btn);
+      // 按钮可能被复用到别的推文（虚拟列表 + 位置重排），创建时的 article 会过期。
+      // 以按钮当前所在的 article 为准，取不到再退回闭包里那个。
+      runForArticle(closestArticle(btn) || article, btn);
     }, true);
     targetHost.insertBefore(btn, null);
+  }
+
+  // 判断编辑器是不是“回复”场景。X 发帖框的 aria-label 是「发帖」/「Post」，回复编辑器是
+  // 「回复」/「Post your reply」。发帖框里没有原推，AI填入 取不到上下文，点了只会报
+  // “没有识别到要回复的推文”；按钮插入点按回复弹窗布局计算，落到发帖框里会浮在 Post 上方。
+  // 因此不注入。主判据是“所在弹窗里有没有原推”，aria-label 只做快速命中，避免 X 改文案后误判。
+  function isReplyComposer(editor) {
+    if (!editor) return false;
+    const label = String(editor.getAttribute?.('aria-label') || '').toLowerCase();
+    if (/reply|回复/.test(label)) return true;
+    const dialog = editor.closest?.('div[role="dialog"]');
+    return Boolean(dialog && dialog.querySelector(ARTICLE_SELECTOR));
   }
 
   function injectComposerButton(anchor) {
@@ -892,6 +1189,7 @@
 
     const box = root.querySelector?.(TEXTBOX_SELECTOR) || getBestTextbox();
     if (!box) return;
+    if (!isReplyComposer(box)) return;
 
     const postButton = root.querySelector?.(POST_BUTTON_SELECTOR) || (anchor.matches?.(POST_BUTTON_SELECTOR) ? anchor : null);
     const toolbar = root.querySelector?.(TOOLBAR_SELECTOR) || (anchor.matches?.(TOOLBAR_SELECTOR) ? anchor : null);
@@ -906,7 +1204,8 @@
     btn.addEventListener('click', (e) => {
       e.preventDefault();
       e.stopPropagation();
-      runForComposer(anchor, btn);
+      // anchor 同样可能已失效，优先用按钮当下的父级编辑器作为锚点
+      runForComposer(btn.isConnected ? btn : anchor, btn);
     }, true);
     insertion.host.insertBefore(btn, insertion.before);
   }

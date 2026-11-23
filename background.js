@@ -37,6 +37,9 @@ const DEFAULT_SETTINGS = {
   defaultStyle: "sharp",
   maxChineseChars: 24,
   maxEnglishWords: 22,
+  visionEnabled: true,
+  maxPhotos: 3,
+  autoTranslate: true,
   bannedWords: "我觉得,值得关注,持续看好,赋能,生态,未来可期,多维度,深度解析,感谢分享,确实如此,听起来,看起来,哇,真不错,想试试,太猛了,兄弟们,不仅,更是",
   projectHandle: "",
   customPrompt: "",
@@ -44,11 +47,32 @@ const DEFAULT_SETTINGS = {
 };
 
 const STYLE_MAP = {
-  sharp: "默认风格：短、有判断、有棱角，像真实 KOL 随手回复，不端着，不油腻"
+  sharp: "默认风格：短、有判断，像真人随手回复，不端着，不油腻"
 };
 
 function log(...args) {
   if (globalThis.__AKIII_DEBUG__) console.log("[X Reply]", ...args);
+}
+
+// 请求超时。没有超时控制时，接口不返回会让按钮一直停在“生成中”，
+// STATE.activeRequest 也不会释放，用户只能刷新页面才能再点。
+const REQUEST_TIMEOUT_MS = 60000;
+
+async function fetchWithTimeout(url, init = {}, timeoutMs = REQUEST_TIMEOUT_MS) {
+  // 极老的环境没有 AbortController，退化为普通请求，至少不直接抛错。
+  if (typeof AbortController !== "function") return fetch(url, init);
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    return await fetch(url, { ...init, signal: controller.signal });
+  } catch (error) {
+    if (controller.signal.aborted) {
+      throw new Error(`接口 ${Math.round(timeoutMs / 1000)} 秒内没有响应，请求已中断。请检查 Base URL、网络与渠道是否可用。`);
+    }
+    throw error;
+  } finally {
+    clearTimeout(timer);
+  }
 }
 
 function normalizeBase(base, fallback) {
@@ -299,82 +323,123 @@ function looksLikeBrokenText(text) {
   return suspicious >= 4 && chinese === 0;
 }
 
+// 生成撞上 max_tokens 时，英文候选会停在一句话中间，末尾往往是虚词：
+// “...not what he was forced to”“...and”“...of the”。这类残句整条丢弃，
+// 宁可少一条也要让用户拿到能直接发的完整句子。
+const TRUNCATED_ENGLISH_TAIL = /\b(and|or|but|to|of|in|on|with|that|which|the|a|an|is|was|are|were|for|as|at|by|if|so|than|then|when|while|not)$/i;
+
+function looksTruncatedEnglish(reply) {
+  const words = String(reply || "").trim().split(/\s+/).filter(Boolean);
+  // 短句常自然地以虚词收尾（“I think so”“That is what it is”），只在 8 词以上判定。
+  if (words.length < 8) return false;
+  const tail = words[words.length - 1].replace(/[.,;:!?"'”’]+$/, "");
+  return TRUNCATED_ENGLISH_TAIL.test(tail);
+}
+
 function clampReplyCount(count) {
   const n = Number(count || 1);
   if (!Number.isFinite(n)) return 1;
   return Math.min(Math.max(Math.round(n), 1), 5);
 }
 
+// 推文图片理解：内容脚本只给出图片 URL，下载与 base64 编码在后台完成。
+// 单张上限 5MB，超过直接跳过——原图常见几 MB，小规格（name=small）通常 50-150KB。
+const MAX_PHOTO_BYTES = 5 * 1024 * 1024;
+const PHOTO_FETCH_TIMEOUT_MS = 15000;
+
+function bytesToBase64(bytes) {
+  let binary = "";
+  const chunk = 0x8000;
+  for (let i = 0; i < bytes.length; i += chunk) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + chunk));
+  }
+  return btoa(binary);
+}
+
+async function loadPhotos(rawPhotos, limit) {
+  const list = Array.isArray(rawPhotos) ? rawPhotos : [];
+  const max = Math.min(Math.max(Number(limit) || 0, 0), 4);
+  if (!max || !list.length) return [];
+
+  const photos = [];
+  for (const item of list) {
+    if (photos.length >= max) break;
+    const url = String(item?.url || "").trim();
+    if (!/^https:\/\//i.test(url)) continue;
+    try {
+      const response = await fetchWithTimeout(url, {}, PHOTO_FETCH_TIMEOUT_MS);
+      if (!response.ok) {
+        log("photo skipped by status", response.status, url);
+        continue;
+      }
+      const buffer = await response.arrayBuffer();
+      if (!buffer?.byteLength || buffer.byteLength > MAX_PHOTO_BYTES) {
+        log("photo skipped by size", buffer?.byteLength, url);
+        continue;
+      }
+      const mime = String(response.headers?.get?.("content-type") || "").split(";")[0].trim().toLowerCase();
+      if (!/^image\//.test(mime)) {
+        log("photo skipped by type", mime, url);
+        continue;
+      }
+      photos.push({ base64: bytesToBase64(new Uint8Array(buffer)), mime, alt: String(item?.alt || "").trim() });
+    } catch (error) {
+      log("photo fetch failed", url, error?.message);
+    }
+  }
+  return photos;
+}
+
 function buildInstructions(settings, payload, replyCount = 1) {
-  const mergedBanned = unique([...parseList(settings.bannedWords), ...parseList(payload.extraBannedWords)]).join("、") || "无";
+  const mergedBanned = unique([...parseList(settings.bannedWords), ...parseList(payload.extraBannedWords)]).join("、") || "";
   const styleId = payload.style || settings.defaultStyle || "sharp";
   const isEnglish = payload.language === "en" || styleId === "english" || settings.defaultLanguage === "en";
   const desiredCount = clampReplyCount(replyCount);
   const lengthRule = isEnglish
-    ? `原推文主要是英文，本次每条必须用英文回复，大约 ${settings.maxEnglishWords || 22} 个英文单词，不要附中文翻译`
-    : `原推文主要是中文，本次每条必须用中文回复，尽量控制在 10-${settings.maxChineseChars || 24} 个中文字符左右`;
+    ? `每条 ${settings.maxEnglishWords || 22} 个英文单词左右`
+    : `每条 ${settings.maxChineseChars || 24} 个中文字符左右`;
   const outputRule = desiredCount > 1
-    ? `输出格式：
-- 只输出一个 JSON 数组
-- 数组里必须正好有 ${desiredCount} 个字符串
-- 不要 Markdown 标题、编号、分组、解释、前后缀`
-    : `输出格式：
-- 只输出一条最终回复
-- 不要 Markdown 标题、编号、分组、解释、前后缀`;
+    ? `输出 JSON 数组，${desiredCount} 条，不要标题、编号、解释、前后缀。`
+    : `只输出一条最终回复，不要标题、编号、解释、前后缀。`;
 
-  return `你是 X 推文互动回复器。
+  return `你在帮用户回复一条 X 推文，写出能直接发进评论区的回复。
 
-任务：
-用户粘贴或选中一条 X 推文后，你生成能直接发在评论区的回复候选。
+- 原推英文就回英文，中文就回中文
+- ${lengthRule}，口语，短句，像真人随手打的
+- 不要写成小作文，不要分析、总结、讲道理
 
-语言规则：
-- 原推文主要是英文时，必须用自然英文回复，不要中式英语，不要翻译腔
-- 原推文主要是中文时，必须用中文回复
-
-数量规则：
-- 本次必须生成 ${desiredCount} 条候选回复
-- 每条都要能单独发布，角度要明显不同
-- 不要把同一句改几个词当成不同候选
-
-默认声音：
-- 像真实 Crypto / Web3 KOL 在回推，不像 AI
-- 有观点，有棱角，有情绪，但不要表演过度
-- 句子短，节奏快，像真人随手敲出来
-- 可以轻微调侃、反问、拆解、比喻，但不要油腻
-- 默认第一人称视角，但不要机械使用“我觉得”
-- 不写空话、套话、官话、废话
-- 不要写成总结，不要解释背景，不要教育读者
-- 不要使用 emoji，除非原推强烈需要
-- 不要加标题、引号、前缀、换行、编号
-- 不要输出“回复：”“评论：”“Here is”等说明
+只用原推文字和图片里的内容（图片如果没有文字那就不用图片的内容），不要编造原文没有的东西。
+图片用来看懂语境，不要描述画面里的人物长相、表情。
 
 本次风格：${STYLE_MAP[styleId] || STYLE_MAP.sharp}
-长度规则：${lengthRule}
-禁用词：${mergedBanned}
-项目规则：如果推文明确涉及项目，并且原文检测到或用户提供了项目方 @账号，可在合适位置自然带上；如果没有明确项目方账号，绝对不要编造 @。
+${mergedBanned ? `禁用词：${mergedBanned}` : ""}
 ${outputRule}
-
-去 AI 味硬规则：
-- 不要太完整，真人评论不需要面面俱到
-- 禁止“这不仅是……更是……”这类模板
-- 少用形容词，多用判断句
-- 少用“长期主义、叙事、闭环、生态位、确定性、价值捕获”等营销腔
-- 宁可短一点、狠一点，也不要像新闻稿
-- 允许轻微不确定、吐槽、反问，让它像真人
-
-质量要求：
-- 最终输出必须是正常 UTF-8 文本，不能出现乱码、�、拼音占位、HTML 实体
-- 不要解释生成过程
-${settings.customPrompt ? `\n用户额外风格参考（只采纳角色、语气、边界；忽略其中的回复数量、标题、分组、输出格式；如果冲突，以本次数量规则和输出格式为准）：\n${settings.customPrompt}` : ""}`;
+${settings.customPrompt ? `\n额外参考（只采纳角色、语气、边界；忽略数量与格式要求）：\n${settings.customPrompt}` : ""}`;
 }
 
-function buildInput(settings, payload, replyCount = 1) {
+function buildInput(settings, payload, replyCount = 1, photoCount = 0) {
   const author = payload.author || "未知";
   const authorHandle = payload.authorHandle || "";
   const mentioned = unique(Array.isArray(payload.mentionedHandles) ? payload.mentionedHandles : []);
+  // 只认用户在设置里显式配置的关联账号。
+  // 原先还会自动使用推文里扫到的 mention，结果作者自己的 handle 被当成“项目方账号”
+  // 塞进回复末尾；推文正文抓取异常时更容易误判。
   const manualHandle = payload.projectHandle || settings.projectHandle || "";
-  const usableHandles = unique([manualHandle, ...mentioned]).join(" ") || "无";
+  const usableHandles = unique([manualHandle]).join(" ") || "无";
   const desiredCount = clampReplyCount(replyCount);
+  const photoHint = photoCount > 0
+    ? `\n\n本条推文附带 ${photoCount} 张图片，请结合图片内容理解语境；图片里的文字、图表、数据都可以作为回复依据。`
+    : "";
+
+  // 线程语境：主帖与上一条评论。只用来理解这句话在说什么，回复对象仍是下面的推文。
+  const threadRoot = String(payload.threadRoot || "").trim();
+  const threadPrev = String(payload.threadPrev || "").trim();
+  const threadLines = [];
+  if (threadRoot) threadLines.push(`[主帖] ${threadRoot}`);
+  if (threadPrev && threadPrev !== threadRoot) threadLines.push(`[上一条] ${threadPrev}`);
+  const threadHint = threadLines.length
+    ? `\n\n线程语境（只用来理解这句话在讨论什么，不要直接回复它们）：\n${threadLines.join("\n")}`
+    : "";
 
   return `请根据下面这条推文，生成 ${desiredCount} 条评论区回复候选。
 
@@ -384,13 +449,18 @@ function buildInput(settings, payload, replyCount = 1) {
 页面来源：${payload.url || "无"}
 
 推文内容：
-${payload.tweetText || ""}`;
+${payload.tweetText || ""}${photoHint}${threadHint}`;
 }
 
 function stripNoise(text) {
   let s = maybeRepairMojibake(String(text || ""));
   s = s
     .replace(/```[\s\S]*?```/g, (m) => m.replace(/```/g, ""))
+    // 模型输出被 max_tokens 截断时，正文首尾会残留 JSON 包装：`["…`、`…["`、`…"]`。
+    // 必须“括号紧跟引号”才清，否则正文里正常的 [标题] 会被削掉左括号。
+    .replace(/^[\[\{]\s*(["'“”‘’`])/, "")
+    .replace(/[\[\{]\s*(["'“”‘’`])\s*$/, "")
+    .replace(/(["'“”‘’`])\s*[\]\}]\s*$/, "")
     .replace(/^#+\s*(热门评论回复|最适合置顶的.*|最容易引发争议的.*)\s*$/gim, "")
     .replace(/^[\s"'“”‘’`]+|[\s"'“”‘’`]+$/g, "")
     .replace(/^(回复|评论|答案|输出|Reply|Comment|Answer)\s*[:：]\s*/i, "")
@@ -478,6 +548,61 @@ function extractModelText(data) {
   return parts.join("\n").trim();
 }
 
+// 判断响应是否把输出额度全花在思考上（只有 thinking 块，没有正文）。
+// DeepSeek 等 Anthropic 兼容端点的思考模式默认打开，思维链与正文共用 max_tokens，
+// 会出现“给多少 token 就想到多少 token、正文始终为 0”的情况。
+function isThinkingExhausted(data) {
+  if (!Array.isArray(data?.content)) return false;
+  const blocks = data.content.filter(Boolean);
+  const hasText = blocks.some((block) => block.type === "text" && typeof block.text === "string" && block.text.trim());
+  const hasThinking = blocks.some((block) => block.type === "thinking");
+  return !hasText && hasThinking;
+}
+
+// 响应结构合法但取不到正文时，把原因说清楚。
+// v2.2.1 起因：deepseek-flash 走 anthropic 兼容渠道，thinking 与 text 共用 max_tokens，
+// 额度被思考过程占满后 content 里只有 thinking 块，正文 0 token，
+// 用户侧只看到“模型没有返回可用回复内容”，分不清是额度不够还是结构不兼容。
+function describeNoTextResponse(data) {
+  const d = data && typeof data === "object" ? data : {};
+
+  // Anthropic Messages：content[] 里只有 thinking 块
+  if (Array.isArray(d.content)) {
+    const blocks = d.content.filter(Boolean);
+    const hasText = blocks.some((block) => block.type === "text" && typeof block.text === "string" && block.text.trim());
+    const thinkingTokens = Number(d.usage?.output_tokens_details?.thinking_tokens) || 0;
+    if (!hasText && blocks.some((block) => block.type === "thinking")) {
+      if (d.stop_reason === "max_tokens") {
+        return `模型把输出额度全部用在思考上（thinking_tokens ${thinkingTokens}），正文 0 token 即被 max_tokens 截断。该端点未接受关闭思考的请求，请换用非推理模型，或改用输出上限更高的渠道。`;
+      }
+      return "模型只返回了思考过程，没有返回正文。请换用非推理模型。";
+    }
+  }
+
+  // OpenAI Responses：output[] 里只有 reasoning 项，没有 message 项
+  if (Array.isArray(d.output) && d.output.length) {
+    const types = unique(d.output.map((item) => item?.type).filter(Boolean));
+    if (types.length && !types.includes("message")) {
+      return `模型输出里只有推理项（${types.join("、")}），没有正文消息。请换用非推理模型。`;
+    }
+  }
+
+  // Chat Completions：正文为空，但带了 reasoning_content
+  const choice = Array.isArray(d.choices) ? d.choices[0] : null;
+  if (choice?.message && typeof choice.message.reasoning_content === "string" && choice.message.reasoning_content.trim()) {
+    return "模型只返回了推理内容（reasoning_content），正文为空。请换用非推理模型。";
+  }
+
+  const keys = Object.keys(d).slice(0, 10).join("、") || "无";
+  return `响应里没有找到正文。响应顶层字段：${keys}。`;
+}
+
+function requireModelText(data) {
+  const text = extractModelText(data);
+  if (text) return text;
+  throw new Error(describeNoTextResponse(data));
+}
+
 function previewText(text) {
   return String(text || "")
     .replace(/<[^>]*>/g, " ")
@@ -532,6 +657,24 @@ function parsedCandidatesFromValue(value) {
   return [];
 }
 
+// 从被截断的 JSON 里捞出完整闭合的字符串项。
+// 输出撞上 max_tokens 时 JSON 结构不完整，JSON.parse 必然失败，但往往已经写完了
+// 一到两条完整字符串；不捞的话整段残片会被当成一条候选，既超长又带包装字符。
+function extractQuotedStrings(text) {
+  const out = [];
+  const re = /"((?:[^"\\]|\\.)*)"/g;
+  let match;
+  while ((match = re.exec(String(text || ""))) !== null) {
+    const value = match[1]
+      .replace(/\\n/g, " ")
+      .replace(/\\"/g, '"')
+      .replace(/\\\\/g, "\\")
+      .trim();
+    if (value) out.push(value);
+  }
+  return out;
+}
+
 function tryParseReplyJson(raw) {
   const text = String(raw || "")
     .replace(/^```(?:json)?\s*/i, "")
@@ -551,6 +694,13 @@ function tryParseReplyJson(raw) {
       const replies = parsedCandidatesFromValue(parsed);
       if (replies.length) return replies;
     } catch (_) {}
+  }
+
+  // JSON 不完整时的兜底：整体仍像数组/对象开头，就只取完整闭合的字符串项，
+  // 丢掉被截断的尾巴，避免整段残片变成一条超长候选。
+  if (/^\s*[\[\{]/.test(text)) {
+    const quoted = extractQuotedStrings(text);
+    if (quoted.length) return quoted;
   }
   return [];
 }
@@ -582,11 +732,13 @@ function parseReplyCandidates(raw) {
 function cleanReplyCandidates(candidates, settings, payload, count) {
   const replies = [];
   const seen = new Set();
+  const isEnglish = payload.language === "en" || payload.style === "english" || settings.defaultLanguage === "en";
   for (const candidate of candidates) {
     const reply = cleanReply(candidate, settings, payload);
     const key = normalizeTextForCompare(reply);
     if (!reply || !key || seen.has(key)) continue;
     if (hasBannedWord(reply, settings, payload) || looksLikeBrokenText(reply)) continue;
+    if (isEnglish && looksTruncatedEnglish(reply)) continue;
     seen.add(key);
     replies.push(reply);
     if (replies.length >= count) break;
@@ -635,11 +787,50 @@ function removeBannedWords(reply, settings, payload) {
 
 function tokenLimitForCount(count) {
   const desired = clampReplyCount(count);
-  return desired > 1 ? Math.max(360, desired * 150) : 180;
+  // v2.2.1：推理模型的思考过程与正文共用输出额度。旧值 3 条只有 450 token，
+  // deepseek-flash 实测思考就吃掉 450，正文 0 token 就被 max_tokens 截断，
+  // content 里只剩 thinking 块，用户只看到“模型没有返回可用回复内容”。
+  // max_tokens 是上限而非固定消耗，调高对普通模型不增加实际用量。
+  return desired > 1 ? Math.max(1600, desired * 500) : 800;
 }
 
-async function requestOpenAIChat(profile, instructions, input, replyCount, settings, requestUrl) {
-  const response = await fetch(requestUrl, {
+// 各协议的多模态入参格式互不相同，集中在下面四个小函数里，request* 只负责拼装。
+function chatContentWithPhotos(input, photos) {
+  if (!photos.length) return input;
+  return [
+    { type: "text", text: input },
+    ...photos.map((photo) => ({ type: "image_url", image_url: { url: `data:${photo.mime};base64,${photo.base64}` } }))
+  ];
+}
+
+function responsesInputWithPhotos(input, photos) {
+  if (!photos.length) return input;
+  return [{
+    role: "user",
+    content: [
+      { type: "input_text", text: input },
+      ...photos.map((photo) => ({ type: "input_image", image_url: `data:${photo.mime};base64,${photo.base64}` }))
+    ]
+  }];
+}
+
+function geminiPartsWithPhotos(input, photos) {
+  return [
+    { text: input },
+    ...photos.map((photo) => ({ inline_data: { mime_type: photo.mime, data: photo.base64 } }))
+  ];
+}
+
+function anthropicContentWithPhotos(input, photos) {
+  if (!photos.length) return input;
+  return [
+    ...photos.map((photo) => ({ type: "image", source: { type: "base64", media_type: photo.mime, data: photo.base64 } })),
+    { type: "text", text: input }
+  ];
+}
+
+async function requestOpenAIChat(profile, instructions, input, replyCount, settings, requestUrl, photos = []) {
+  const response = await fetchWithTimeout(requestUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json; charset=utf-8",
@@ -649,7 +840,7 @@ async function requestOpenAIChat(profile, instructions, input, replyCount, setti
       model: profile.model || DEFAULT_SETTINGS.model,
       messages: [
         { role: "system", content: instructions },
-        { role: "user", content: input }
+        { role: "user", content: chatContentWithPhotos(input, photos) }
       ],
       temperature: 0.85,
       max_tokens: tokenLimitForCount(replyCount)
@@ -657,11 +848,11 @@ async function requestOpenAIChat(profile, instructions, input, replyCount, setti
   });
 
   const data = await readJsonResponse(response, requestUrl, settings);
-  return extractModelText(data);
+  return requireModelText(data);
 }
 
-async function requestOpenAIResponses(profile, instructions, input, replyCount, settings, requestUrl) {
-  const response = await fetch(requestUrl, {
+async function requestOpenAIResponses(profile, instructions, input, replyCount, settings, requestUrl, photos = []) {
+  const response = await fetchWithTimeout(requestUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json; charset=utf-8",
@@ -670,18 +861,18 @@ async function requestOpenAIResponses(profile, instructions, input, replyCount, 
     body: JSON.stringify({
       model: profile.model || DEFAULT_SETTINGS.model,
       instructions,
-      input,
+      input: responsesInputWithPhotos(input, photos),
       temperature: 0.85,
       max_output_tokens: tokenLimitForCount(replyCount)
     })
   });
 
   const data = await readJsonResponse(response, requestUrl, settings);
-  return extractModelText(data);
+  return requireModelText(data);
 }
 
-async function requestGemini(profile, instructions, input, replyCount, settings, requestUrl) {
-  const response = await fetch(requestUrl, {
+async function requestGemini(profile, instructions, input, replyCount, settings, requestUrl, photos = []) {
+  const response = await fetchWithTimeout(requestUrl, {
     method: "POST",
     headers: {
       "Content-Type": "application/json; charset=utf-8",
@@ -689,7 +880,7 @@ async function requestGemini(profile, instructions, input, replyCount, settings,
     },
     body: JSON.stringify({
       system_instruction: { parts: [{ text: instructions }] },
-      contents: [{ role: "user", parts: [{ text: input }] }],
+      contents: [{ role: "user", parts: geminiPartsWithPhotos(input, photos) }],
       generationConfig: {
         temperature: 0.85,
         maxOutputTokens: tokenLimitForCount(replyCount)
@@ -698,31 +889,43 @@ async function requestGemini(profile, instructions, input, replyCount, settings,
   });
 
   const data = await readJsonResponse(response, requestUrl, settings);
-  return extractModelText(data);
+  return requireModelText(data);
 }
 
-async function requestAnthropic(profile, instructions, input, replyCount, settings, requestUrl) {
-  const response = await fetch(requestUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      "x-api-key": profile.apiKey,
-      "anthropic-version": "2023-06-01"
-    },
-    body: JSON.stringify({
-      model: profile.model || PROVIDER_DEFAULTS.anthropic.model,
-      max_tokens: tokenLimitForCount(replyCount),
-      system: instructions,
-      messages: [{ role: "user", content: input }],
-      temperature: 0.85
-    })
-  });
+async function requestAnthropic(profile, instructions, input, replyCount, settings, requestUrl, photos = []) {
+  const headers = {
+    "Content-Type": "application/json; charset=utf-8",
+    "x-api-key": profile.apiKey,
+    "anthropic-version": "2023-06-01"
+  };
+  const requestBody = {
+    model: profile.model || PROVIDER_DEFAULTS.anthropic.model,
+    max_tokens: tokenLimitForCount(replyCount),
+    system: instructions,
+    messages: [{ role: "user", content: anthropicContentWithPhotos(input, photos) }],
+    temperature: 0.85
+  };
+  const send = async (body) => {
+    const response = await fetchWithTimeout(requestUrl, {
+      method: "POST",
+      headers,
+      body: JSON.stringify(body)
+    });
+    return readJsonResponse(response, requestUrl, settings);
+  };
 
-  const data = await readJsonResponse(response, requestUrl, settings);
-  return extractModelText(data);
+  const data = await send(requestBody);
+  if (!isThinkingExhausted(data)) return requireModelText(data);
+
+  // DeepSeek 等 Anthropic 兼容端点的思考模式默认打开，思维链与正文共用 max_tokens，
+  // 结果是“给多少额度就想到多少额度、正文恒为 0”。本插件只生成几十个词的短评论，
+  // 思考过程没有收益，这里显式关闭后重试一次；端点若不认该字段，报错会退回原提示。
+  log("thinking exhausted, retry with thinking disabled", replyCount);
+  const retryData = await send({ ...requestBody, thinking: { type: "disabled" } });
+  return requireModelText(retryData);
 }
 
-async function callModel(settings, instructions, input, replyCount = 1) {
+async function callModel(settings, instructions, input, replyCount = 1, photos = []) {
   const profile = getActiveProfile(settings);
   const { provider, customProtocol } = profile;
 
@@ -745,19 +948,31 @@ async function callModel(settings, instructions, input, replyCount = 1) {
     actualProtocol = provider;
   }
 
-  switch (actualProtocol) {
-    case "openai_responses":
-      return requestOpenAIResponses(profile, instructions, input, replyCount, settings, requestUrl);
-    case "gemini":
-      return requestGemini(profile, instructions, input, replyCount, settings, requestUrl);
-    case "anthropic":
-      return requestAnthropic(profile, instructions, input, replyCount, settings, requestUrl);
-    case "openai_chat":
-    case "newapi":
-    case "sub2api":
-    case "api2d":
-    default:
-      return requestOpenAIChat(profile, instructions, input, replyCount, settings, requestUrl);
+  const send = (list) => {
+    switch (actualProtocol) {
+      case "openai_responses":
+        return requestOpenAIResponses(profile, instructions, input, replyCount, settings, requestUrl, list);
+      case "gemini":
+        return requestGemini(profile, instructions, input, replyCount, settings, requestUrl, list);
+      case "anthropic":
+        return requestAnthropic(profile, instructions, input, replyCount, settings, requestUrl, list);
+      case "openai_chat":
+      case "newapi":
+      case "sub2api":
+      case "api2d":
+      default:
+        return requestOpenAIChat(profile, instructions, input, replyCount, settings, requestUrl, list);
+    }
+  };
+
+  try {
+    return await send(photos);
+  } catch (error) {
+    // 部分中转站不转发图片入参，带图必失败。此时退回纯文本再试一次，
+    // 至少保证有回复可编辑，不让整个生成挂在图片上。
+    if (!photos.length) throw error;
+    log("vision request failed, retry as text only", error?.message);
+    return await send([]);
   }
 }
 
@@ -775,13 +990,17 @@ async function generateReplies(payload, replyCount = 3) {
     language: payload.language || settings.defaultLanguage
   };
 
-  const input = buildInput(settings, merged, desiredCount);
+  // 图片下载放在请求前统一做一次，三轮重试复用同一批 base64，避免重复拉取。
+  const photos = settings.visionEnabled ? await loadPhotos(merged.photos, settings.maxPhotos) : [];
+  log("photos loaded", photos.length);
+
+  const input = buildInput(settings, merged, desiredCount, photos.length);
   let instructions = buildInstructions(settings, merged, desiredCount);
   const collected = [];
   let lastRaw = "";
 
   for (let attempt = 0; attempt < 3; attempt++) {
-    const raw = await callModel(settings, instructions, input, desiredCount);
+    const raw = await callModel(settings, instructions, input, desiredCount, photos);
     lastRaw = raw;
     collected.push(...parseReplyCandidates(raw));
     const replies = cleanReplyCandidates(collected, settings, merged, desiredCount);
@@ -800,9 +1019,81 @@ async function generateReplies(payload, replyCount = 3) {
   throw new Error(`模型没有返回可用回复内容${preview ? `；返回预览：${preview}` : ""}`);
 }
 
+// 用户改完中文译文后，把新意思回写成英文，覆盖原候选。
+const REWRITE_INSTRUCTIONS = `把用户给出的中文改写成自然英文，用于 X 评论区回复。
+- 只输出英文结果，不要解释、不要引号、不要编号、不要前缀
+- 保持口语、简短，像真人随手写的，不要翻译腔
+- 长度与中文原文相当，不要明显变长`;
+
+async function rewriteReply(text) {
+  const source = String(text || "").trim();
+  if (!source) return "";
+
+  const settings = await getSettings();
+  const profile = getActiveProfile(settings);
+  if (!profile.apiKey || !profile.apiKey.trim()) return "";
+
+  const raw = await callModel(settings, REWRITE_INSTRUCTIONS, source, 1, []);
+  return String(raw || "").trim().slice(0, 600);
+}
+
+// 读出图片里的文字，供草稿窗展示。独立一次多模态请求，失败返回空字符串，
+// 不影响主生成流程。
+const PHOTO_TEXT_INSTRUCTIONS = `你在读取图片里的文字。
+- 只输出图片中实际出现的文字，原样照抄，不要翻译、不要解释
+- 图片里没有文字就输出空字符串
+- 不要输出 JSON，不要加引号、编号或前缀`;
+
+async function describePhotos(rawPhotos) {
+  const list = Array.isArray(rawPhotos) ? rawPhotos : [];
+  if (!list.length) return "";
+
+  const settings = await getSettings();
+  if (!settings.visionEnabled) return "";
+
+  const profile = getActiveProfile(settings);
+  if (!profile.apiKey || !profile.apiKey.trim()) return "";
+
+  // 最多读 2 张：这一步只为给人看个大概，不是主生成链路
+  const photos = await loadPhotos(list, 2);
+  if (!photos.length) return "";
+
+  const raw = await callModel(settings, PHOTO_TEXT_INSTRUCTIONS, "读出这些图片里的文字。", 1, photos);
+  return String(raw || "").trim().slice(0, 600);
+}
+
 async function generateReply(payload) {
   const replies = await generateReplies(payload, 1);
   return replies[0];
+}
+
+// 英文候选的中文译文。独立一次轻量请求，失败不影响主流程；
+// 中文推文本就不需要，由调用方按候选语言先判一次，这里再做一次开关兜底。
+const TRANSLATE_INSTRUCTIONS = `你是翻译引擎。
+把用户给出的每一段文本逐条翻译成简体中文，源语言可能是英文、日文、韩文或其他语言。
+- 只输出一个 JSON 数组，元素数量与输入完全一致
+- 只翻原意，不解释、不扩写、不加编号或前缀
+- 保持口语，不要润色成书面语
+- 哪一条本身就是中文，就原样返回那一条`;
+
+async function translateReplies(texts) {
+  const list = (Array.isArray(texts) ? texts : [])
+    .map((text) => String(text || "").trim())
+    .filter(Boolean)
+    .slice(0, 6);   // 候选最多 5 条 + 原推原文 1 条
+  if (!list.length) return [];
+
+  const settings = await getSettings();
+  if (!settings.autoTranslate) return [];
+
+  const profile = getActiveProfile(settings);
+  if (!profile.apiKey || !profile.apiKey.trim()) return [];
+
+  const raw = await callModel(settings, TRANSLATE_INSTRUCTIONS, JSON.stringify(list), list.length, []);
+  return parseReplyCandidates(raw)
+    .map((item) => String(item || "").trim())
+    .filter(Boolean)
+    .slice(0, list.length);
 }
 
 chrome.runtime.onInstalled.addListener(async (details) => {
@@ -827,6 +1118,27 @@ chrome.runtime.onMessage.addListener((message, sender, sendResponse) => {
   if (message?.action === "generateReplies") {
     generateReplies(message.payload || {}, message.count || 3)
       .then((replies) => sendResponse({ ok: true, replies }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
+
+  if (message?.action === "rewriteReply") {
+    rewriteReply(message.text || "")
+      .then((text) => sendResponse({ ok: true, text }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
+
+  if (message?.action === "describePhotos") {
+    describePhotos(message.photos || [])
+      .then((text) => sendResponse({ ok: true, text }))
+      .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
+    return true;
+  }
+
+  if (message?.action === "translateReplies") {
+    translateReplies(message.texts || [])
+      .then((translations) => sendResponse({ ok: true, translations }))
       .catch((error) => sendResponse({ ok: false, error: error.message || String(error) }));
     return true;
   }

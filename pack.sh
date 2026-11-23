@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
-# pack.sh — 重新打包 OPC-X-Reply-Extension.zip 供普通用户下载
+# pack.sh — 重新打包 XReplyHelper.zip 供普通用户下载
 # 用法：bash pack.sh
-# 输出：项目根的 OPC-X-Reply-Extension.zip（覆盖旧文件）
+# 输出：项目根的 XReplyHelper.zip（覆盖旧文件）
 # 何时跑：每次迭代代码测试通过、push 到远端之前
 
 set -euo pipefail

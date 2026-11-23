@@ -15,9 +15,9 @@ test("candidate action buttons use one compact shared width", () => {
   assert.match(rule(".akiii-draft-panel"), /--akiii-action-button-width:\s*84px;/);
   assert.match(rule(".akiii-draft-panel"), /box-sizing:\s*border-box;/);
   assert.match(rule(".akiii-draft-panel"), /isolation:\s*isolate;/);
-  assert.match(rule(".akiii-draft-panel"), /width:\s*min\(490px,\s*calc\(100vw - 24px\)\);/);
-  assert.match(rule(".akiii-draft-panel"), /height:\s*min\(490px,\s*60dvh\);/);
-  assert.match(rule(".akiii-draft-panel"), /max-height:\s*min\(490px,\s*60dvh\);/);
+  assert.match(rule(".akiii-draft-panel"), /width:\s*min\(560px,\s*calc\(100vw - 24px\)\);/);
+  assert.match(rule(".akiii-draft-panel"), /height:\s*auto;/);
+  assert.match(rule(".akiii-draft-panel"), /max-height:\s*calc\(100dvh - 24px\);/);
   assert.match(rule(".akiii-draft-panel"), /padding:\s*16px;/);
   assert.match(rule(".akiii-draft-panel"), /overflow:\s*hidden;/);
   assert.match(rule(".akiii-draft-head"), /margin-bottom:\s*16px;/);
@@ -43,8 +43,8 @@ test("candidate action buttons use one compact shared width", () => {
   assert.match(text, /min-width:\s*0;/);
   assert.match(text, /max-width:\s*none;/);
   assert.match(text, /justify-self:\s*stretch;/);
-  assert.match(text, /height:\s*clamp\(108px,\s*13dvh,\s*112px\);/);
-  assert.match(text, /max-height:\s*124px;/);
+  assert.match(text, /height:\s*clamp\(148px,\s*17dvh,\s*168px\);/);
+  assert.match(text, /max-height:\s*200px;/);
   assert.match(text, /padding:\s*10px\s+12px;/);
   assert.match(text, /text-indent:\s*70px;/);
   assert.match(text, /resize:\s*none;/);
@@ -131,4 +131,19 @@ test("草稿窗头部头像与标题文字块保持垂直对齐", () => {
 test("草稿窗按钮和关闭按钮都有键盘焦点态", () => {
   assert.match(rule(".akiii-draft-close:focus-visible"), /outline:\s*3px\s+solid/);
   assert.match(rule(".akiii-draft-candidate-actions button:focus-visible"), /outline:\s*3px\s+solid/);
+});
+
+test("v2.3.2: 译文行有独立样式，不会被候选文本样式覆盖", () => {
+  const translation = rule(".akiii-draft-translation");
+  assert.match(translation, /text-indent:\s*0;/);
+  assert.match(translation, /border-left:/);
+  // 与文本列右边缘对齐，不越过右侧按钮列
+  assert.match(translation, /margin-right:\s*calc\(var\(--akiii-action-button-width\) \+ 12px\);/);
+});
+
+test("v2.3.5: 原推译文完整显示，不折叠不限高", () => {
+  const source = rule(".akiii-draft-source");
+  assert.doesNotMatch(source, /max-height:/);
+  assert.doesNotMatch(source, /overflow:\s*hidden/);
+  assert.doesNotMatch(css, /akiii-draft-source-expanded/);
 });

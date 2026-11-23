@@ -41,6 +41,9 @@ const DEFAULT_SETTINGS = {
   defaultLanguage: "zh",
   maxChineseChars: 24,
   maxEnglishWords: 22,
+  visionEnabled: true,
+  maxPhotos: 3,
+  autoTranslate: true,
   bannedWords: "我觉得,值得关注,持续看好,赋能,生态,未来可期,多维度,深度解析,感谢分享,确实如此,听起来,看起来,哇,真不错,想试试,太猛了,兄弟们,不仅,更是",
   projectHandle: "",
   customPrompt: "",
@@ -131,6 +134,9 @@ const TOP_LEVEL_FIELDS = [
   "defaultLanguage",
   "maxChineseChars",
   "maxEnglishWords",
+  "visionEnabled",
+  "maxPhotos",
+  "autoTranslate",
   "bannedWords",
   "projectHandle",
   "customPrompt",
@@ -191,6 +197,9 @@ async function load() {
   $("defaultLanguage").value = merged.defaultLanguage || "zh";
   $("maxChineseChars").value = merged.maxChineseChars ?? DEFAULT_SETTINGS.maxChineseChars;
   $("maxEnglishWords").value = merged.maxEnglishWords ?? DEFAULT_SETTINGS.maxEnglishWords;
+  $("visionEnabled").checked = merged.visionEnabled ?? DEFAULT_SETTINGS.visionEnabled;
+  $("maxPhotos").value = merged.maxPhotos ?? DEFAULT_SETTINGS.maxPhotos;
+  $("autoTranslate").checked = merged.autoTranslate ?? DEFAULT_SETTINGS.autoTranslate;
   $("bannedWords").value = merged.bannedWords ?? "";
   $("projectHandle").value = merged.projectHandle ?? "";
   $("customPrompt").value = merged.customPrompt ?? "";
@@ -276,6 +285,9 @@ function readForm() {
       defaultStyle: "sharp",
       maxChineseChars: Number($("maxChineseChars").value || DEFAULT_SETTINGS.maxChineseChars),
       maxEnglishWords: Number($("maxEnglishWords").value || DEFAULT_SETTINGS.maxEnglishWords),
+      visionEnabled: Boolean($("visionEnabled").checked),
+      maxPhotos: Math.min(Math.max(Number($("maxPhotos").value || DEFAULT_SETTINGS.maxPhotos), 1), 4),
+      autoTranslate: Boolean($("autoTranslate").checked),
       bannedWords: $("bannedWords").value.trim(),
       projectHandle: $("projectHandle").value.trim(),
       customPrompt: $("customPrompt").value.trim(),

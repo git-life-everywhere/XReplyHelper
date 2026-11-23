@@ -1,18 +1,18 @@
-# X 推文互动回复器 v2.2
+# X 推文互动回复器 v2.3.0
 
-X 推文互动回复器（OPC-X-Reply-Extension）是一款面向 X / Twitter KOL 的 AI 回复辅助 Chrome 扩展，可在推文旁一键生成中英文评论候选，先编辑草稿后再填入回复框。
+X 推文互动回复器（XReplyHelper）是一款通用的 X / Twitter AI 回复辅助 Chrome 扩展，可在推文旁一键生成中英文评论候选，先编辑草稿后再填入回复框。不限定领域，读书、科技、商业、生活、加密都能用。
 
 本仓库基于上游 [Akiii-v-1.9](https://github.com/futakocui008/Akiii-v-1.9) 演进，在 v2.x 系列里做了多渠道接口、3 条候选草稿窗、Base URL 智能补全、API Key 可见性切换等实用层面的深度优化。
 
-> 当前版本：**v2.2**
+> 当前版本：**v2.3.0**
 
 ---
 
 ## 项目简介
 
-插件的核心定位：让 X / Twitter 上的回复更接近"真人随手写下的评论"，而不是机械式的 AI 模板。针对 Crypto / Web3 KOL 的日常互动场景做了专门优化，内置提示词会主动规避常见 AI 套话，例如"值得关注""未来可期""赋能生态""感谢分享"等。
+插件的核心定位：让 X / Twitter 上的回复更接近"真人随手写下的评论"，而不是机械式的 AI 模板。提示词会让模型先判断原推属于什么领域，再用那个领域的说话方式回应——原推讲读书就按读书的语境接，讲加密才开始聊盘面。内置规则会主动规避常见 AI 套话，例如"值得关注""未来可期""赋能生态""感谢分享"等。
 
-默认回复风格追求**短促、有观点、有棱角，不端着也不油腻**，目标是"更像真实 KOL 随手发出的评论"。
+默认回复风格追求**短促、有观点、有棱角，不端着也不油腻**，目标是"更像真人随手发出的评论"。
 
 生成内容会先进入**可编辑草稿窗**（一次 3 条候选），用户可以修改、删减、润色，确认满意后再点击 `填入 X`。**插件永不自动发布任何回复。**
 
@@ -22,11 +22,11 @@ X 推文互动回复器（OPC-X-Reply-Extension）是一款面向 X / Twitter KO
 
 1. **推文旁一键生成回复**：时间线 / 推文详情页操作区自动注入 `AI回` 按钮，点击后读取推文内容并生成评论。
 2. **回复框内一键生成**：打开 X 回复弹窗时显示 `AI填入` 按钮。
-3. **一次 3 条候选 + 可编辑草稿窗**：v2.2 起改为 490px 方形草稿窗，候选标签内嵌到文本框首行，支持单独编辑、单独复制、单独填入 X。
+3. **一次 3 条候选 + 可编辑草稿窗**：560px 宽的草稿窗，候选标签内嵌到文本框首行，支持单独编辑、单独复制、单独填入 X。候选框加高到 148-168px，长文本不再一行就滚。
 4. **中英文自动识别**：基于 CJK / 拉丁字符密度自动判断主语言，中文推文生成中文短评，英文推文生成自然英文回复，混合则按主语言判断。
 5. **去 AI 味提示词**：要求自然、有灵魂、有观点，不写空话套话、不滥用 emoji、不输出解释、不带"回复："等前缀。
 6. **禁用词过滤**：用户可自定义禁用词，命中即丢弃整条候选并重试。
-7. **项目方 @ 账号识别**：识别到项目方账号时自然带上 handle；没识别到则不会编造。
+7. **关联 @ 账号识别**：推文提到品牌、项目或机构账号时自然带上 handle；没识别到则不会编造。
 8. **8 个 API 渠道支持**（v2.1.0 起）：OpenAI-Chat / OpenAI-Response / Gemini / 兼容 Anthropic / New API / Sub2API / api2d / 自定义，每个渠道**独立缓存** Key / 模型 / Base URL，切换不丢配置。
 9. **Base URL 智能补全**（v2.1.3 起）：根域名、带 `/v1`、带 `/v1/`、完整 endpoint 都能识别归一化，末尾加 `#` 强制透传（Azure 风格）。
 10. **完整 API_Base_URL 实时预览**（v2.1.0 起）：输入框下方等宽灰字实时显示真正会发起请求的完整地址，避免填成首页/控制台地址。
@@ -36,7 +36,8 @@ X 推文互动回复器（OPC-X-Reply-Extension）是一款面向 X / Twitter KO
 14. **本地保存配置**：所有配置（包括 API Key）仅存在 `chrome.storage.local`，不上传任何远端。
 15. **二次元玻璃拟态 UI**：v2.1.4 起采用强哥拍的新底图 `options_bg.png`，section-title 用 lucide 风格 inline SVG 图标。
 16. **独立设置页**：点击浏览器图标直接打开 options.html，不再用容易自动关闭的 popup。
-17. **自动化测试基线**：`tests/*.test.mjs` 共 55 条用例，覆盖 background 生成路径、content 注入逻辑、CSS 约束、manifest 行为、endpoint-preview。
+17. **推文图片理解**（v2.2.2 起）：默认读取 3 张推文图片并交给模型，渠道不支持时自动退回纯文本。
+18. **自动化测试基线**：`tests/*.test.mjs` 共 111 条用例，覆盖 background 生成路径、content 注入逻辑、CSS 约束、manifest 行为、endpoint-preview、多模态入参。
 
 ---
 
@@ -44,15 +45,15 @@ X 推文互动回复器（OPC-X-Reply-Extension）是一款面向 X / Twitter KO
 
 **设置页主界面（玻璃拟态）：**
 
-![设置页主界面](docs/readme_img/OPC-X-Reply-Extension_options-index.png)
+![设置页主界面](docs/readme_img/XReplyHelper_options-index.png)
 
 **API 设置（8 个渠道下拉选项）：**
 
-![API 设置 8 个渠道](docs/readme_img/OPC-X-Reply-Extension_options-apisz.png)
+![API 设置 8 个渠道](docs/readme_img/XReplyHelper_options-apisz.png)
 
 **v2.2 方形草稿窗（行内候选标签 + 等距留白）：**
 
-![v2.2 方形草稿窗](docs/readme_img/OPC-X-Reply-Extension_490.png)
+![v2.2 方形草稿窗](docs/readme_img/XReplyHelper_490.png)
 
 **推文操作区按钮（AI回 / AI填入）：**
 
@@ -68,23 +69,23 @@ X 推文互动回复器（OPC-X-Reply-Extension）是一款面向 X / Twitter KO
 
 **Base URL 智能补全实时预览：**
 
-![API 设置区底部"完整 API_Base_URL 预览](docs/readme_img/OPC-X-Reply-Extension_options-allurl.png)
+![API 设置区底部"完整 API_Base_URL 预览](docs/readme_img/XReplyHelper_options-allurl.png)
 ---
 
 ## 使用场景
 
 适用人群：
 
-- X / Twitter KOL 日常评论区互动
-- Crypto / Web3 项目方社区运营、BD / Growth
-- 中英文内容创作者
+- 读书、科技、商业、生活类内容创作者
+- 加密 / Web3 项目方社区运营、BD / Growth
+- 中英文双语发帖、需要按原推语言回应的用户
 - 需要高频高质评论但又不想被 AI 味暴露的所有用户
 
 ---
 
 ## 安装方式（Chrome 开发者模式）
 
-1. 下载 [OPC-X-Reply-Extension.zip](https://github.com/iBigQiang/OPC-X-Reply-Extension/blob/main/OPC-X-Reply-Extension.zip) 解压（或 clone 整个仓库）。
+1. 下载 [XReplyHelper.zip](https://github.com/iBigQiang/XReplyHelper/blob/main/XReplyHelper.zip) 解压（或 clone 整个仓库）。
 2. 浏览器地址栏访问：
 
    ```text
@@ -164,7 +165,7 @@ AI填入
 | **默认语言** | 自动 / 中文优先 / 英文优先（实际仍会被推文语言检测覆盖） |
 | **中文上限** | 控制中文回复字符数（软上限 24，最终硬截 +18） |
 | **英文词数** | 控制英文回复词数（软上限 22，最终硬截 +8） |
-| **默认项目方 @ 账号** | 推文确实涉及该项目方时自然带入，否则不强插 |
+| **默认关联 @ 账号** | 推文确实涉及该账号所属方时自然带入，否则不强插 |
 | **禁用词** | 逗号或换行分隔，命中即丢弃整条候选并重试 |
 | **额外提示词** | 仅作为风格、人设、边界参考。即使写了数量/标题/格式要求，**也不能覆盖** 3 条候选 / JSON 输出格式 |
 | **开启调试日志** | Service Worker 控制台输出 `[X Reply]` 详细日志 |
@@ -176,7 +177,7 @@ AI填入
 ## 文件结构
 
 ```text
-OPC-X-Reply-Extension/
+XReplyHelper/
 ├── manifest.json
 ├── background.js
 ├── content.js
@@ -186,7 +187,7 @@ OPC-X-Reply-Extension/
 ├── README.md
 ├── pack.sh                           # Linux/macOS/Git Bash 打包脚本
 ├── pack.ps1                          # Windows PowerShell 打包脚本
-├── OPC-X-Reply-Extension.zip         # 给普通用户下载的解压包
+├── XReplyHelper.zip         # 给普通用户下载的解压包
 ├── img/
 │   ├── i_16.png / i_32.png / i_48.png / i_128.png / i_256.png
 │   ├── options_bg.png                # 设置页 / 草稿窗底图（v2.1.4）
@@ -209,11 +210,12 @@ OPC-X-Reply-Extension/
 当前版本：
 
 ```text
-v2.2
+v2.3.0
 ```
 
 主要版本节点：
 
+- **v2.3.0** — 定位通用化：去掉 Crypto / Web3 KOL 硬绑定，按原推领域自适应；新增推文图片理解；长推先展开再读；草稿窗加宽加大；丢弃截断残句；请求超时与推理模型思考额度修复
 - **v2.2** — 草稿窗视觉重构：490px 方形面板、行内候选标签、等距留白、候选外层底色移除，并同步更新 README 配图
 - **v2.1.4** — hero 区作者超链接去样式 + 背景图替换收尾 + section-title 图标 lucide 化 + 修复 API Key 泄露事故
 - **v2.1.3** — Base URL 智能自动补全归一化（学习 Cherry Studio）
@@ -226,33 +228,22 @@ v2.2
 
 ---
 
-## 后续规划：多模态图片理解
+## 图片理解（已支持）
 
-当前 v2.2 稳定版只把推文文字、作者、handle、页面 URL 等文本信息发送给模型，**不会上传推文图片**。即使选择 Gemini 等支持多模态的模型，现有请求体也仍然是纯文本 `parts[{ text }]`，所以模型无法识别图片内容。
+v2.2.2 起支持把推文图片交给模型。原先只发文字，即使选 Gemini 等支持多模态的模型，请求体也是纯文本，模型看不到图。
 
-这个能力有新增价值，但不适合默认全量开启。它适合以下场景：
+**工作方式：**
 
-- 推文正文很短，核心信息在截图、公告图、图表、产品界面、代码截图里。
-- 发的是 meme、海报、K 线图、数据图，纯文字模型只能猜，回复容易泛泛而谈。
-- 用户明确想要“看图评论”，多模态识图能明显提升回复命中率。
+1. 从推文节点或回复弹窗中取媒体 CDN（`pbs.twimg.com/media`）下的图片，地址统一换成 `small` 规格，同时收集 `alt` 文本
+2. 后台逐张下载，单张 15 秒超时、体积上限 5MB，转 base64
+3. 按所选渠道拼多模态请求体（Chat Completions / Responses / Gemini / Anthropic 四种格式）
+4. 提示词里注明附带几张图，模型可引用图里的文字、图表与数据
 
-默认开启图片上传也有现实风险：
+**默认行为：** 默认开启，默认读取 3 张，上限 4 张。可在设置页关闭或调整数量。
 
-- **成本不可控**：4 张高清图会显著增加视觉 token / 计费，高频使用时不划算。
-- **速度变慢**：图片下载、压缩、转 base64、模型视觉理解都会拖慢生成。
-- **兼容复杂**：Gemini、OpenAI、Anthropic 和各类兼容渠道的图片入参格式不同，NewAPI / Sub2API / api2d 是否稳定转发图片也需要逐一验证。
-- **稳定性风险**：X 图片 URL、缩略图、原图、alt 文本 DOM 结构都可能变化，处理不好会影响当前稳定的纯文字路径。
-- **隐私与预期**：用户可能没意识到图片也会被发送给模型，必须提供明确开关。
+**兜底：** 某张图下载失败、超时或超限时跳过该张；整次带图请求被渠道拒绝时，自动退回纯文本再请求一次，回复仍能生成，只是不含图片信息。
 
-建议后续作为 v2.3 或独立实验分支推进，不污染当前纯文字稳定链路：
-
-1. **默认保持纯文字**：v2.2 的默认行为继续保持低成本、快速、稳定。
-2. **单开分支实验**：建议使用 `codex/vision-reply-support`，先跑通 Gemini 一个 provider，再评估 OpenAI / Anthropic。
-3. **做成设置项且默认关闭**：增加“启用图片理解”“最多读取图片数量 1 / 2 / 4”“优先使用图片 alt 文本”“只在推文文字少于 N 字时启用”等选项。
-4. **加成本保护**：默认最多 1 张图，压缩到 768px 或 1024px 上限，超大图跳过，4 图推文只取第一张或让用户手动选择“带图生成”。
-5. **优先轻量版**：第一阶段只提取图片 alt 文本、图片数量、图片 URL 域名/尺寸信息；如果 alt 文本存在，就作为文本补充进 prompt，不直接上传图片。
-
-判断标准：关闭多模态开关后，插件行为必须和 v2.2 完全一致；只有用户明确启用时，才进入图片理解路径。
+**代价：** 每张图约增加千级 token 用量。高频使用时注意接口开销。
 
 ---
 
@@ -293,7 +284,7 @@ pwsh pack.ps1       # Windows PowerShell
 
 ## 捐赠打赏
 
-如果 【OPC-X-Reply-Extension / X 推文互动回复器】 对你有帮助，欢迎请作者喝杯咖啡 :)
+如果 【XReplyHelper / X 推文互动回复器】 对你有帮助，欢迎请作者喝杯咖啡 :)
 
 <p align="center">
   <img src="docs/readme_img/Payment_QR_code.png" alt="打赏码" width="600">
@@ -315,4 +306,4 @@ pwsh pack.ps1       # Windows PowerShell
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=iBigQiang/OPC-X-Reply-Extension&type=Date)](https://star-history.com/#iBigQiang/OPC-X-Reply-Extension&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=iBigQiang/XReplyHelper&type=Date)](https://star-history.com/#iBigQiang/XReplyHelper&Date)

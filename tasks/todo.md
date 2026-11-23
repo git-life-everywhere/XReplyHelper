@@ -15,7 +15,7 @@
   - [ ] `git push --force-with-lease origin main` 覆盖远端
 - [x] `docs/DEVLOG.md` 追加 v2.1.4 章节（含图标 + 安全事故修复）
 - [ ] 跑 `node --test tests/*.test.mjs`：预期 41/41
-- [ ] `bash pack.sh` 重打 `OPC-X-Reply-Extension.zip`
+- [ ] `bash pack.sh` 重打 `XReplyHelper.zip`
 - [ ] `git add` + `git commit`（v2.1.4 + 图标 + .gitignore + git rm --cached + DEVLOG + todo + zip）
 - [ ] **Chrome 实测（用户跑）**：装载新 zip → hero 区作者那一行的「强子手记」「Akiii」无下划线无蓝色，hover 微淡；新背景图正常显示；3 个 section-title 左侧 lucide 图标清晰可见
 - [ ] **用户手动**：到 https://platform.deepseek.com 撤销已泄露的 Key（具体值在 GitGuardian 邮件中）

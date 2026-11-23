@@ -1,4 +1,4 @@
-# pack.ps1 — Build OPC-X-Reply-Extension.zip with correct UTF-8 file names.
+# pack.ps1 — Build XReplyHelper.zip with correct UTF-8 file names.
 # Why .NET API instead of Compress-Archive: PowerShell's Compress-Archive on Windows
 # writes non-ASCII file names with the wrong byte encoding even though it sets Bit11=1
 # (UTF-8 flag), so unzip tools see garbled CJK names.
@@ -13,7 +13,7 @@ $ErrorActionPreference = 'Stop'
 $ScriptDir = Split-Path -Parent $MyInvocation.MyCommand.Path
 Set-Location $ScriptDir
 
-$Target = 'OPC-X-Reply-Extension.zip'
+$Target = 'XReplyHelper.zip'
 if (Test-Path $Target) { Remove-Item $Target -Force }
 
 Add-Type -AssemblyName System.IO.Compression
@@ -66,4 +66,4 @@ try {
 }
 
 $sizeKB = [int]((Get-Item $absTarget).Length / 1024)
-Write-Host "[pack] OPC-X-Reply-Extension.zip ready ($sizeKB KB)"
+Write-Host "[pack] XReplyHelper.zip ready ($sizeKB KB)"
