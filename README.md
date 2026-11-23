@@ -85,7 +85,7 @@ X 推文互动回复器（XReplyHelper）是一款通用的 X / Twitter AI 回�
 
 ## 安装方式（Chrome 开发者模式）
 
-1. 下载 [XReplyHelper.zip](https://github.com/iBigQiang/XReplyHelper/blob/main/XReplyHelper.zip) 解压（或 clone 整个仓库）。
+1. 下载 [XReplyHelper.zip](https://github.com/git-life-everywhere/XReplyHelper/blob/main/XReplyHelper.zip) 解压（或 clone 整个仓库）。
 2. 浏览器地址栏访问：
 
    ```text
@@ -306,4 +306,4 @@ pwsh pack.ps1       # Windows PowerShell
 
 ## Star History
 
-[![Star History Chart](https://api.star-history.com/svg?repos=iBigQiang/XReplyHelper&type=Date)](https://star-history.com/#iBigQiang/XReplyHelper&Date)
+[![Star History Chart](https://api.star-history.com/svg?repos=git-life-everywhere/XReplyHelper&type=Date)](https://star-history.com/#git-life-everywhere/XReplyHelper&Date)
