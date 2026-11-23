@@ -44,6 +44,7 @@ const DEFAULT_SETTINGS = {
   visionEnabled: true,
   maxPhotos: 3,
   forceEnglishReplies: true,
+  disableReasoning: true,
   autoTranslate: true,
   bannedWords: "我觉得,值得关注,持续看好,赋能,生态,未来可期,多维度,深度解析,感谢分享,确实如此,听起来,看起来,哇,真不错,想试试,太猛了,兄弟们,不仅,更是",
   projectHandle: "",
@@ -140,6 +141,7 @@ const TOP_LEVEL_FIELDS = [
   "visionEnabled",
   "maxPhotos",
   "forceEnglishReplies",
+  "disableReasoning",
   "autoTranslate",
   "bannedWords",
   "projectHandle",
@@ -204,6 +206,7 @@ async function load() {
   $("visionEnabled").checked = merged.visionEnabled ?? DEFAULT_SETTINGS.visionEnabled;
   $("maxPhotos").value = merged.maxPhotos ?? DEFAULT_SETTINGS.maxPhotos;
   $("forceEnglishReplies").checked = merged.forceEnglishReplies ?? DEFAULT_SETTINGS.forceEnglishReplies;
+  $("disableReasoning").checked = merged.disableReasoning ?? DEFAULT_SETTINGS.disableReasoning;
   $("autoTranslate").checked = merged.autoTranslate ?? DEFAULT_SETTINGS.autoTranslate;
   $("bannedWords").value = merged.bannedWords ?? "";
   $("projectHandle").value = merged.projectHandle ?? "";
@@ -293,6 +296,7 @@ function readForm() {
       visionEnabled: Boolean($("visionEnabled").checked),
       maxPhotos: Math.min(Math.max(Number($("maxPhotos").value || DEFAULT_SETTINGS.maxPhotos), 1), 4),
       forceEnglishReplies: Boolean($("forceEnglishReplies").checked),
+      disableReasoning: Boolean($("disableReasoning").checked),
       autoTranslate: Boolean($("autoTranslate").checked),
       bannedWords: $("bannedWords").value.trim(),
       projectHandle: $("projectHandle").value.trim(),

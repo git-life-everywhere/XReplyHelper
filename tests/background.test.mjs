@@ -1017,3 +1017,65 @@ test("v2.6.1: 放宽后原有行为不变", () => {
     "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
   );
 });
+
+// v2.6.2 — Response 渠道按需关闭模型思考以提速；网关不认该参数时自动回退。
+test("v2.6.2: 开启关闭思考时请求体带 reasoning.effort=none", async () => {
+  const { calls, fetchImpl } = recordingFetch({
+    content: [{ type: "text", text: JSON.stringify(["A", "B", "C"]) }]
+  });
+
+  const context = loadBackground({
+    settings: providerSettings("openai_responses", {}, { disableReasoning: true }),
+    fetchImpl
+  });
+
+  await context.generateReplies(payload(), 3);
+  const body = JSON.parse(calls[0].init.body);
+  assert.deepEqual(body.reasoning, { effort: "none" });
+});
+
+test("v2.6.2: 关闭该开关时不带 reasoning 字段", async () => {
+  const { calls, fetchImpl } = recordingFetch({
+    content: [{ type: "text", text: JSON.stringify(["A", "B", "C"]) }]
+  });
+
+  const context = loadBackground({
+    settings: providerSettings("openai_responses", {}, { disableReasoning: false }),
+    fetchImpl
+  });
+
+  await context.generateReplies(payload(), 3);
+  assert.equal(JSON.parse(calls[0].init.body).reasoning, undefined);
+});
+
+test("v2.6.2: 网关不认 reasoning 参数时去掉重试", async () => {
+  const calls = [];
+  const fetchImpl = async (url, init) => {
+    calls.push({ url, init });
+    const body = JSON.parse(init.body);
+    if (body.reasoning) {
+      return {
+        ok: false,
+        status: 400,
+        headers: { get: () => "application/json" },
+        text: async () => JSON.stringify({ error: { message: "Unsupported parameter: 'reasoning'" } })
+      };
+    }
+    return {
+      ok: true,
+      status: 200,
+      headers: { get: () => "application/json" },
+      text: async () => JSON.stringify({ content: [{ type: "text", text: JSON.stringify(["A", "B", "C"]) }] })
+    };
+  };
+
+  const context = loadBackground({
+    settings: providerSettings("openai_responses", {}, { disableReasoning: true }),
+    fetchImpl
+  });
+
+  const replies = await context.generateReplies(payload(), 3);
+  assert.equal(replies.length, 3);
+  assert.equal(calls.length, 2, "先带 reasoning 失败，再去掉重试");
+  assert.equal(JSON.parse(calls[1].init.body).reasoning, undefined);
+});

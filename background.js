@@ -36,6 +36,7 @@ const DEFAULT_SETTINGS = {
   defaultLanguage: "zh",
   defaultStyle: "sharp",
   forceEnglishReplies: true,
+  disableReasoning: true,
   maxChineseChars: 24,
   maxEnglishWords: 22,
   visionEnabled: true,
@@ -869,23 +870,45 @@ async function requestOpenAIChat(profile, instructions, input, replyCount, setti
 }
 
 async function requestOpenAIResponses(profile, instructions, input, replyCount, settings, requestUrl, photos = []) {
-  const response = await fetchWithTimeout(requestUrl, {
-    method: "POST",
-    headers: {
-      "Content-Type": "application/json; charset=utf-8",
-      "Authorization": `Bearer ${profile.apiKey}`
-    },
-    body: JSON.stringify({
+  const buildBody = (withReasoningOff) => {
+    const body = {
       model: profile.model || DEFAULT_SETTINGS.model,
       instructions,
       input: responsesInputWithPhotos(input, photos),
       temperature: 0.85,
       max_output_tokens: tokenLimitForCount(replyCount)
-    })
-  });
+    };
+    // 推理模型的思考过程与正文共用额度，且会明显拖慢响应。
+    // 这里按需关闭；部分网关不认 reasoning 字段，失败后自动去掉重试。
+    if (withReasoningOff) body.reasoning = { effort: "none" };
+    return body;
+  };
 
-  const data = await readJsonResponse(response, requestUrl, settings);
-  return requireModelText(data);
+  const send = async (withReasoningOff) => {
+    const response = await fetchWithTimeout(requestUrl, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json; charset=utf-8",
+        "Authorization": `Bearer ${profile.apiKey}`
+      },
+      body: JSON.stringify(buildBody(withReasoningOff))
+    });
+    return readJsonResponse(response, requestUrl, settings);
+  };
+
+  if (!settings.disableReasoning) {
+    return requireModelText(await send(false));
+  }
+
+  try {
+    return requireModelText(await send(true));
+  } catch (error) {
+    const message = String(error?.message || "");
+    // 只有「不认这个参数」才回退；Key 错、地址错这类重试也没用。
+    if (!/reasoning|unsupported|unrecognized|unknown|invalid|extra/i.test(message)) throw error;
+    log("gateway rejected reasoning: none, retrying without it", message);
+    return requireModelText(await send(false));
+  }
 }
 
 async function requestGemini(profile, instructions, input, replyCount, settings, requestUrl, photos = []) {

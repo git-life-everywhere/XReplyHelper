@@ -5,6 +5,36 @@
 
 ---
 
+## v2.6.2 — 2026-11-24 — Response 渠道可关闭模型思考，提速
+
+**确定方案**
+
+使用者换豆包（`doubao-seed-evolving`，走火山 Ark 的 Responses 接口）后反馈响应很慢。关掉图片理解与自动翻译仍慢，定位到是模型在跑思考过程——推理模型的思考 token 与正文共用额度，且耗时明显。
+
+Anthropic 渠道此前已有「检测到只有 thinking 块就关闭重试」的逻辑，但那只处理「思考吃光额度、正文为空」的失败场景，对「思考很久但最终有输出」的慢没有作用。Responses 渠道则完全没有相关处理。
+
+方案：按需在请求体里加 `reasoning: { effort: "none" }`。部分网关不认这个字段，失败后自动去掉重试一次。
+
+**实施细节**
+
+- `background.js`
+  - `DEFAULT_SETTINGS` 新增 `disableReasoning: true`。
+  - `requestOpenAIResponses()` 改为 `buildBody(withReasoningOff)` + `send()` 两个闭包：开启时先带 `reasoning.effort = "none"`，捕获错误后只在错误信息含 `reasoning / unsupported / unrecognized / unknown / invalid / extra` 时回退重试——Key 错、地址错这类重试没意义。
+- `options.html` / `options.js`
+  - 回复设置新增「关闭模型思考（Response 渠道，提速）」开关。
+- `tests/background.test.mjs`
+  - 新增 3 条：开启时带参数、关闭时不带、网关拒绝参数时去掉重试。
+
+**状态**
+
+已交付。`node --test tests/*.test.mjs` 118/118 全绿。
+
+**遗留**
+
+- `effort: "none"` 是 DeepSeek 的取值，OpenAI 官方只有 `minimal` 起。官方渠道若拒绝会被回退逻辑兜住，但等于没提速。
+- 只作用于 Responses 渠道。Chat Completions 渠道的推理模型（如 DeepSeek-R1）思考耗时暂时无法关闭。
+- 关闭思考后回复质量可能下降，尤其需要论证的推文。慢与好是取舍。
+
 ## v2.6.1 — 2026-11-24 — 修正非 /v1 前缀网关的路径补全
 
 **确定方案**
