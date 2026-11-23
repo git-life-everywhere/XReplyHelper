@@ -5,6 +5,33 @@
 
 ---
 
+## v2.6.1 — 2026-11-24 — 修正非 /v1 前缀网关的路径补全
+
+**确定方案**
+
+使用者接火山引擎（Ark）时报错：`The specified action is invalid: /api/v3/responses/v1/chat/completions`。
+
+拆开看，`/api/v3/responses` 是他填的 Base URL，`/v1/chat/completions` 是插件补的。原来的补全只认两种完整端点：以 `版本段 + 端点尾`（即 `/v1/responses`）结尾，或以 `/v1` 结尾。`/api/v3/responses` 两种都不算，于是先补 `/v1` 再拼端点尾，拼出一个不存在的地址。
+
+火山引擎的完整端点是 `https://ark.cn-beijing.volces.com/api/v3/responses`，路径前缀是 `/api/v3`，不是 `/v1`。各家中转网关也常见类似前缀。
+
+**实施细节**
+
+- `background.js` / `options.js`（两份实现必须同步）
+  - 完整端点判定放宽：只看是否以 `endpointTail` 结尾，不再要求版本段是 `/v1`。
+  - 版本段判定放宽：`/v1` 精确匹配之外，形如 `/api/v3`、`/v2beta` 的自定义版本段也算已给，不再追加默认版本段。
+- `tests/background.test.mjs`
+  - 新增 2 条：`/api/v3` 只拼端点尾、不重复加 `/v1`；放宽后 OpenAI / Anthropic / Gemini 的原行为不变。
+
+**状态**
+
+已交付。`node --test tests/*.test.mjs` 115/115 全绿。
+
+**遗留**
+
+- 放宽后有误判可能：若用户把 Base URL 填成某个以 `/responses` 结尾的网页路径，会被当成完整端点透传。这种情况本来也会请求失败，只是错误信息从「路径不对」变成「接口无效」。
+- 火山引擎的 Responses 接口入参里图片用 `input_image`，与插件 `responsesInputWithPhotos()` 生成的格式一致，不需要额外适配。
+
 ## v2.6.0 — 2026-11-23 — 中文推文也优先给英文回复
 
 **确定方案**

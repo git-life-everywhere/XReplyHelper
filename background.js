@@ -113,18 +113,21 @@ function buildFinalEndpoint(provider, base, model) {
   // 3. 未知 provider 兜底为 openai_chat 风格
   const spec = PROVIDER_PATH_SPEC[provider] || PROVIDER_PATH_SPEC.openai_chat;
 
-  // 4. 用户已填完整 endpoint：识别并透传
+  // 4. 用户已填完整 endpoint：识别并透传。
+  // 只看是否以端点尾结尾，不要求版本段一定是 /v1——火山引擎用的是 /api/v3/responses，
+  // 各家中转网关也常见 /api/v2、/openai/v1 这类前缀。
   if (provider === "gemini") {
     if (/\/models\/[^/]+:generateContent$/i.test(trimmed)) return trimmed;
   } else {
-    const fullSuffix = (spec.versionSeg + spec.endpointTail).toLowerCase();
-    if (trimmed.toLowerCase().endsWith(fullSuffix)) return trimmed;
+    const tail = spec.endpointTail.toLowerCase();
+    if (trimmed.toLowerCase().endsWith(tail)) return trimmed;
   }
 
-  // 5. 用户已以 versionSeg 结尾：直接拼 endpointTail
-  // 精确末尾匹配：/v1$ 不会误判 /v1beta
+  // 5. 已含版本段就不再补：/v1 精确匹配（不误判 /v1beta），
+  // 或者形如 /api/v3、/v2beta 的自定义版本段也算。
   const versionEndRe = new RegExp(escapeRegex(spec.versionSeg) + "$", "i");
-  const baseWithVersion = versionEndRe.test(trimmed)
+  const customVersionRe = /\/(?:api\/)?v\d+(?:beta)?$/i;
+  const baseWithVersion = versionEndRe.test(trimmed) || customVersionRe.test(trimmed)
     ? trimmed
     : trimmed + spec.versionSeg;
 

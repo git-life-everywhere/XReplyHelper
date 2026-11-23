@@ -980,3 +980,40 @@ test("v2.6.0: shouldReplyInEnglish 覆盖四种输入", () => {
   // 默认语言设成英文 → 全部英文
   assert.equal(context.shouldReplyInEnglish({ ...base, forceEnglishReplies: false, defaultLanguage: "en" }, { language: "zh" }), true);
 });
+
+// v2.6.1 — 非 /v1 前缀的网关（如火山引擎 /api/v3）也要正确补全。
+test("v2.6.1: 自定义版本段 /api/v3 只拼端点尾，不重复加 /v1", () => {
+  const context = loadBackground({
+    settings: baseSettings(),
+    fetchImpl: async () => ({ ok: true, status: 200, headers: { get: () => "application/json" }, text: async () => "{}" })
+  });
+
+  assert.equal(
+    context.buildFinalEndpoint("openai_responses", "https://ark.cn-beijing.volces.com/api/v3", "m"),
+    "https://ark.cn-beijing.volces.com/api/v3/responses"
+  );
+  assert.equal(
+    context.buildFinalEndpoint("openai_responses", "https://ark.cn-beijing.volces.com/api/v3/responses", "m"),
+    "https://ark.cn-beijing.volces.com/api/v3/responses"
+  );
+});
+
+test("v2.6.1: 放宽后原有行为不变", () => {
+  const context = loadBackground({
+    settings: baseSettings(),
+    fetchImpl: async () => ({ ok: true, status: 200, headers: { get: () => "application/json" }, text: async () => "{}" })
+  });
+
+  assert.equal(
+    context.buildFinalEndpoint("openai_chat", "https://api.openai.com", "m"),
+    "https://api.openai.com/v1/chat/completions"
+  );
+  assert.equal(
+    context.buildFinalEndpoint("anthropic", "https://api.deepseek.com/anthropic", "m"),
+    "https://api.deepseek.com/anthropic/v1/messages"
+  );
+  assert.equal(
+    context.buildFinalEndpoint("gemini", "https://generativelanguage.googleapis.com", "gemini-2.0-flash"),
+    "https://generativelanguage.googleapis.com/v1beta/models/gemini-2.0-flash:generateContent"
+  );
+});
